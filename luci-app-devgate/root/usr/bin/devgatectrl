@@ -297,24 +297,21 @@ check_device_control() {
 	esac
 }
 
-# 更新设备状态
-update_device_status() {
+# 同步设备状态
+sync_device_status() {
 	local id="$1"
-	local should_allow="$2"  # 0=允许, 1=禁止
 	local target=$(config_t_get device mac "$id")
 	local comment=$(config_t_get device comment "$id" "设备$id")
+	local is_blocked=0
 
-	# 检查当前状态
-	local current_blocked=0
 	if [ -f "$IDLIST" ] && grep -q "!${id}!" "$IDLIST" 2>/dev/null; then
-		current_blocked=1
+		is_blocked=1
 	fi
 
-	dbg "设备状态: $target, 应该允许=$should_allow, 当前阻止=$current_blocked"
+	dbg "设备状态: $target, 已阻止=$is_blocked"
 
-	if [ "$should_allow" -eq 0 ]; then
-		# 应该允许
-		if [ "$current_blocked" -eq 1 ]; then
+	if check_device_control "$id"; then
+		if [ "$is_blocked" -eq 1 ]; then
 			dbg "解除阻止: $target"
 			devgate del "$id"
 			sed -i "/!$id!/d" "$IDLIST" 2>/dev/null
@@ -322,15 +319,17 @@ update_device_status() {
 			record_connection_time "$target" "disconnect"
 		fi
 	else
-		# 应该阻止
-		if [ "$current_blocked" -eq 0 ]; then
+		if [ "$is_blocked" -eq 0 ]; then
 			dbg "添加阻止: $target"
-			devgate add "$id"
-			if ! grep -q "!$id!" "$IDLIST" 2>/dev/null; then
-				echo "!$id!" >> "$IDLIST"
+			if devgate add "$id"; then
+				if ! grep -q "!$id!" "$IDLIST" 2>/dev/null; then
+					echo "!$id!" >> "$IDLIST"
+				fi
+				info "阻止上网: $comment ($target)"
+				record_connection_time "$target" "disconnect"
+			else
+				info "阻止失败: $comment ($target)"
 			fi
-			info "阻止上网: $comment ($target)"
-			record_connection_time "$target" "disconnect"
 		fi
 	fi
 }
@@ -346,11 +345,7 @@ main_loop() {
 			break
 		fi
 		for id in $(get_enabled_devices); do
-			if check_device_control "$id"; then
-				update_device_status "$id" 0  # 允许
-			else
-				update_device_status "$id" 1  # 阻止
-			fi
+			sync_device_status "$id"
 		done
 
 		sleep 60

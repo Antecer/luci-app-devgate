@@ -337,9 +337,6 @@ function getCurrentClient() {
 
 	return requestRemoteAddress('admin/services/devgate/remote_addr')
 		.then(function (ip) {
-			return ip || requestRemoteAddress('admin/network/remote_addr');
-		})
-		.then(function (ip) {
 			return { ip: ip || null };
 		});
 }
@@ -490,12 +487,16 @@ return view.extend({
 		o.rmempty = false;
 		o.default = '1';
 
-		o = s.option(form.Value, 'mac', _('目标设备(IP 或 MAC)'));
+		o = s.option(form.Value, 'mac', _('目标设备'));
 		o.rmempty = false;
-		// o.description = _('IP、CIDR、IP 范围或 MAC。');
+		// o.description = _('以MAC识别设备，IP仅用于辅助辨认。');
 		o.validate = function (section_id, value) {
 			if (isProtectedTarget(value, protectedClient)) {
 				return _('不能选择当前登录设备。');
+			}
+
+			if (!normalizeMac(value)) {
+				return _('请选择或输入设备MAC。');
 			}
 
 			return true;
@@ -513,29 +514,15 @@ return view.extend({
 					return;
 				}
 
-				if (ips.length > 0) {
-					ips.forEach(function (ip) {
-						var macDisplay = 'MAC：%s（%s - %s）'.format(mac, ip, name);
-						hostOptions['mac:' + mac] = macDisplay;
-						var ipDisplay = 'IP：%s（%s - %s）'.format(ip, mac, name);
-						hostOptions['ip:' + ip] = ipDisplay;
-					});
-				}
+				var ipText = ips.length > 0 ? ips.join(', ') : _('未知IP');
+				hostOptions[mac] = '%s（%s）'.format(name, ipText);
 			});
 			var sortedKeys = Object.keys(hostOptions).sort(function (a, b) {
 				return hostOptions[a].localeCompare(hostOptions[b]);
 			});
 
 			sortedKeys.forEach(function (key) {
-				if (key.startsWith('ip:')) {
-					o.value(key.substring(3), hostOptions[key]);
-				}
-			});
-
-			sortedKeys.forEach(function (key) {
-				if (key.startsWith('mac:')) {
-					o.value(key.substring(4), hostOptions[key]);
-				}
+				o.value(key, hostOptions[key]);
 			});
 		}
 

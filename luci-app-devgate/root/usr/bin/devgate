@@ -37,78 +37,77 @@ dbg() {
 	if [ "$DEBUG" -eq 1 ]; then
 		local d="$(date '+%Y-%m-%d %H:%M:%S')"
 		echo "[$d] FW-DEBUG: $@" >> "$LOG_FILE"
-		echo "FW-DEBUG: $@"
 	fi
 }
 
 info() {
 	local d="$(date '+%Y-%m-%d %H:%M:%S')"
 	echo "[$d] FW-INFO: $@" >> "$LOG_FILE"
-	echo "FW-INFO: $@"
 }
 
-# 地址解析函数 - 修复格式问题
-parse_target() {
-	local target="$1"
+# MAC解析函数。IP只作为旧配置兼容输入，运行时始终解析成MAC再生效。
+normalize_mac() {
+	local mac
+	mac=$(echo "${1:-}" | xargs | tr '[:upper:]' '[:lower:]')
 
-	# 去除空格
-	target=$(echo "${target}" | xargs)
-
-	dbg "解析目标地址: $target"
-
-	# IPv4单个地址
-	if echo "$target" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-		local octets=(${target//./ })
-		local valid=1
-		for octet in "${octets[@]}"; do
-			if [ "$octet" -gt 255 ] || [ "$octet" -lt 0 ]; then
-				valid=0
-				break
-			fi
-		done
-		[ "$valid" -eq 1 ] && {
-			echo "ipv4:single:$target"
-			return 0
-		}
-
-	# IPv4范围
-	elif echo "$target" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}-([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-		local start_ip=${target%-*}
-		local end_ip=${target#*-}
-		echo "ipv4:range:$start_ip-$end_ip"
+	if echo "$mac" | grep -qE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'; then
+		echo "$mac"
 		return 0
+	fi
 
-	# CIDR
-	elif echo "$target" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}/[0-9]{1,2}$'; then
-		local ip=${target%/*}
-		local mask=${target#*/}
-		[ "$mask" -le 32 ] && [ "$mask" -ge 0 ] && {
-			echo "ipv4:cidr:$target"
-			return 0
-		}
+	return 1
+}
 
-	# MAC地址
-	elif echo "$target" | grep -qE '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'; then
-		echo "mac:single:$(echo "$target" | tr '[:upper:]' '[:lower:]')"
-		return 0
+resolve_ip_to_mac() {
+	local ip="$1"
+	local mac
 
-	# IPv6地址
-	elif echo "$target" | grep -qE '^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}$'; then
-		echo "ipv6:single:$target"
-		return 0
-
-	# IPv6 CIDR
-	elif echo "$target" | grep -qE '^([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}/[0-9]{1,3}$'; then
-		local ipv6=${target%/*}
-		local mask=${target#*/}
-		[ "$mask" -le 128 ] && [ "$mask" -ge 0 ] && {
-			echo "ipv6:cidr:$target"
+	if [ -f "/proc/net/arp" ]; then
+		mac=$(awk -v ip="$ip" 'tolower($1) == tolower(ip) && $4 != "00:00:00:00:00:00" { print $4; exit }' /proc/net/arp 2>/dev/null)
+		mac=$(normalize_mac "$mac") && {
+			echo "$mac"
 			return 0
 		}
 	fi
 
-	dbg "无法解析地址: $target"
+	if command -v ip >/dev/null 2>&1; then
+		mac=$(ip neigh show "$ip" 2>/dev/null | awk 'tolower($0) ~ /lladdr/ { for (i = 1; i <= NF; i++) if ($i == "lladdr") { print $(i + 1); exit } }')
+		mac=$(normalize_mac "$mac") && {
+			echo "$mac"
+			return 0
+		}
+	fi
+
 	return 1
+}
+
+resolve_target_mac() {
+	local target="$1"
+	local mac
+
+	target=$(echo "${target}" | xargs)
+	dbg "解析目标MAC: $target"
+
+	mac=$(normalize_mac "$target") && {
+		echo "$mac"
+		return 0
+	}
+
+	mac=$(resolve_ip_to_mac "$target") && {
+		dbg "通过IP解析目标MAC: $target -> $mac"
+		echo "$mac"
+		return 0
+	}
+
+	dbg "无法解析目标MAC: $target"
+	return 1
+}
+
+parse_target() {
+	local mac
+
+	mac=$(resolve_target_mac "$1") || return 1
+	echo "mac:single:$mac"
 }
 
 # 清理现有连接
@@ -170,7 +169,7 @@ check_firewall_tool() {
 init_firewall() {
 	check_firewall_tool || return 1
 
-	info "初始化防火墙规则 (黑名单模式，控制强度按设备规则)"
+	info "初始化防火墙规则 (黑名单模式，REJECT目标，控制强度按设备规则)"
 
 	if [ -n "$nftables_ver" ]; then
 		# 使用nftables
@@ -184,71 +183,24 @@ init_firewall() {
 		nft add table inet devgate
 		nft add chain inet devgate forward "{ type filter hook forward priority -100; policy accept; }"
 
-		# 创建黑名单集合
-		nft add set inet devgate blacklist "{ type ipv4_addr; flags interval; }"
-		nft add set inet devgate blacklist6 "{ type ipv6_addr; flags interval; }"
+		# 创建MAC黑名单集合
 		nft add set inet devgate blacklist_mac "{ type ether_addr; }"
-		nft add set inet devgate blacklist_input "{ type ipv4_addr; flags interval; }"
-		nft add set inet devgate blacklist6_input "{ type ipv6_addr; flags interval; }"
 		nft add set inet devgate blacklist_mac_input "{ type ether_addr; }"
 
-		# 禁止访问公共网络：匹配到就DROP转发流量
-		nft add rule inet devgate forward ip saddr @blacklist drop
-		nft add rule inet devgate forward ip6 saddr @blacklist6 drop
-		nft add rule inet devgate forward ether saddr @blacklist_mac drop
+		# 禁止访问公共网络：参考LuCI防火墙通信规则，匹配源MAC后拒绝转发。
+		nft add rule inet devgate forward meta nfproto ipv4 ether saddr @blacklist_mac counter reject comment "DevGate MAC IPv4 forward reject"
+		nft add rule inet devgate forward meta nfproto ipv6 ether saddr @blacklist_mac counter reject comment "DevGate MAC IPv6 forward reject"
 
 		# 禁止访问全部网络：额外匹配访问路由器本机的INPUT流量
 		nft add chain inet devgate input "{ type filter hook input priority -100; policy accept; }"
-		nft add rule inet devgate input ip saddr @blacklist_input drop
-		nft add rule inet devgate input ip6 saddr @blacklist6_input drop
-		nft add rule inet devgate input ether saddr @blacklist_mac_input drop
+		nft add rule inet devgate input meta nfproto ipv4 ether saddr @blacklist_mac_input counter reject comment "DevGate MAC IPv4 input reject"
+		nft add rule inet devgate input meta nfproto ipv6 ether saddr @blacklist_mac_input counter reject comment "DevGate MAC IPv6 input reject"
 
 		info "nftables初始化完成"
 
 	elif [ -n "$iptables_ver" ]; then
-		# 使用iptables
-		dbg "初始化iptables"
-
-		# 创建ipset（如果不存在）
-		ipset create devgate_blacklist hash:net 2>/dev/null || {
-			ipset flush devgate_blacklist
-			dbg "已存在的ipset devgate_blacklist已清空"
-		}
-
-		ipset create devgate_blacklist6 hash:net family inet6 2>/dev/null || {
-			ipset flush devgate_blacklist6
-			dbg "已存在的ipset devgate_blacklist6已清空"
-		}
-
-		ipset create devgate_input_blacklist hash:net 2>/dev/null || {
-			ipset flush devgate_input_blacklist
-			dbg "已存在的ipset devgate_input_blacklist已清空"
-		}
-
-		ipset create devgate_input_blacklist6 hash:net family inet6 2>/dev/null || {
-			ipset flush devgate_input_blacklist6
-			dbg "已存在的ipset devgate_input_blacklist6已清空"
-		}
-
-		# 删除可能存在的旧规则
-		iptables -D FORWARD -m set --match-set devgate_blacklist src -j DROP 2>/dev/null
-		ip6tables -D FORWARD -m set --match-set devgate_blacklist6 src -j DROP 2>/dev/null
-		iptables -D INPUT -m set --match-set devgate_input_blacklist src -j DROP 2>/dev/null
-		ip6tables -D INPUT -m set --match-set devgate_input_blacklist6 src -j DROP 2>/dev/null
-
-		# 禁止访问公共网络
-		iptables -I FORWARD -m set --match-set devgate_blacklist src -j DROP
-		ip6tables -I FORWARD -m set --match-set devgate_blacklist6 src -j DROP
-
-		dbg "已添加FORWARD规则"
-
-		# 禁止访问全部网络
-		iptables -I INPUT -m set --match-set devgate_input_blacklist src -j DROP
-		ip6tables -I INPUT -m set --match-set devgate_input_blacklist6 src -j DROP
-
-		dbg "已添加INPUT规则"
-
-		info "iptables初始化完成"
+		info "错误: MAC识别需要nftables支持，不初始化iptables规则"
+		return 1
 	fi
 
 	return 0
@@ -264,15 +216,11 @@ stop_firewall() {
 	fi
 
 	if [ -n "$iptables_ver" ]; then
-		# 删除iptables规则
-		iptables -D FORWARD -m set --match-set devgate_blacklist src -j DROP 2>/dev/null
-		iptables -D INPUT -m set --match-set devgate_blacklist src -j DROP 2>/dev/null
-		ip6tables -D FORWARD -m set --match-set devgate_blacklist6 src -j DROP 2>/dev/null
-		ip6tables -D INPUT -m set --match-set devgate_blacklist6 src -j DROP 2>/dev/null
-		iptables -D INPUT -m set --match-set devgate_input_blacklist src -j DROP 2>/dev/null
-		ip6tables -D INPUT -m set --match-set devgate_input_blacklist6 src -j DROP 2>/dev/null
-
-		# 删除ipset
+		# 清理旧版本可能遗留的ipset规则
+		iptables -D FORWARD -m set --match-set devgate_blacklist src -j REJECT 2>/dev/null
+		ip6tables -D FORWARD -m set --match-set devgate_blacklist6 src -j REJECT 2>/dev/null
+		iptables -D INPUT -m set --match-set devgate_input_blacklist src -j REJECT 2>/dev/null
+		ip6tables -D INPUT -m set --match-set devgate_input_blacklist6 src -j REJECT 2>/dev/null
 		ipset destroy devgate_blacklist 2>/dev/null
 		ipset destroy devgate_blacklist6 2>/dev/null
 		ipset destroy devgate_input_blacklist 2>/dev/null
@@ -312,41 +260,20 @@ add_device() {
 	if [ -n "$nftables_ver" ]; then
 		# nftables处理
 		case "$type" in
-			"ipv4")
-				nft add element inet devgate blacklist "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
-				[ "$device_chain" = "input" ] && nft add element inet devgate blacklist_input "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
-				dbg "已添加到nftables黑名单(IPv4): $value"
-				;;
-			"ipv6")
-				nft add element inet devgate blacklist6 "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
-				[ "$device_chain" = "input" ] && nft add element inet devgate blacklist6_input "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
-				dbg "已添加到nftables黑名单(IPv6): $value"
-				;;
 			"mac")
 				nft add element inet devgate blacklist_mac "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
 				[ "$device_chain" = "input" ] && nft add element inet devgate blacklist_mac_input "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
 				dbg "已添加到nftables黑名单(MAC): $value"
 				;;
+			*)
+				info "添加失败: 只支持MAC目标 $target"
+				return 1
+				;;
 		esac
 
 	elif [ -n "$iptables_ver" ]; then
-		# iptables处理
-		case "$type" in
-			"ipv4")
-				ipset add devgate_blacklist "$value" 2>&1 | while read line; do dbg "ipset: $line"; done
-				[ "$device_chain" = "input" ] && ipset add devgate_input_blacklist "$value" 2>&1 | while read line; do dbg "ipset: $line"; done
-				dbg "已添加到ipset黑名单(IPv4): $value"
-				;;
-			"ipv6")
-				ipset add devgate_blacklist6 "$value" 2>&1 | while read line; do dbg "ipset: $line"; done
-				[ "$device_chain" = "input" ] && ipset add devgate_input_blacklist6 "$value" 2>&1 | while read line; do dbg "ipset: $line"; done
-				dbg "已添加到ipset黑名单(IPv6): $value"
-				;;
-			"mac")
-				# iptables不支持MAC地址直接过滤，记录日志
-				info "警告: iptables不支持MAC地址过滤，设备 $target 可能无法被阻止"
-				;;
-		esac
+		info "错误: MAC识别需要nftables支持，iptables后端不启用设备 $target"
+		return 1
 	fi
 
 	# 禁止访问全部网络时清理现有连接，让规则立即生效
@@ -356,7 +283,7 @@ add_device() {
 	fi
 
 	# 验证规则
-	verify_firewall_rule "$target"
+	verify_firewall_rule "$value" || return 1
 }
 
 # 验证防火墙规则
@@ -366,15 +293,12 @@ verify_firewall_rule() {
 	dbg "验证防火墙规则: $target"
 
 	if [ -n "$nftables_ver" ]; then
-		nft list table inet devgate 2>/dev/null | grep -q "$target" && {
+		nft list table inet devgate 2>/dev/null | grep -qi "$target" && {
 			dbg "验证成功: $target 在nftables规则中"
 			return 0
 		}
 	elif [ -n "$iptables_ver" ]; then
-		ipset test devgate_blacklist "$target" 2>/dev/null && {
-			dbg "验证成功: $target 在ipset中"
-			return 0
-		}
+		info "错误: MAC识别需要nftables支持，iptables后端无法验证"
 	fi
 
 	dbg "验证失败: $target 不在防火墙规则中"
@@ -406,36 +330,20 @@ del_device() {
 
 	if [ -n "$nftables_ver" ]; then
 		case "$type" in
-			"ipv4")
-				nft delete element inet devgate blacklist "{ $value }" 2>/dev/null
-				nft delete element inet devgate blacklist_input "{ $value }" 2>/dev/null
-				dbg "已从nftables移除(IPv4): $value"
-				;;
-			"ipv6")
-				nft delete element inet devgate blacklist6 "{ $value }" 2>/dev/null
-				nft delete element inet devgate blacklist6_input "{ $value }" 2>/dev/null
-				dbg "已从nftables移除(IPv6): $value"
-				;;
 			"mac")
 				nft delete element inet devgate blacklist_mac "{ $value }" 2>/dev/null
 				nft delete element inet devgate blacklist_mac_input "{ $value }" 2>/dev/null
 				dbg "已从nftables移除(MAC): $value"
 				;;
+			*)
+				info "移除失败: 只支持MAC目标 $target"
+				return 1
+				;;
 		esac
 
 	elif [ -n "$iptables_ver" ]; then
-		case "$type" in
-			"ipv4")
-				ipset del devgate_blacklist "$value" 2>/dev/null
-				ipset del devgate_input_blacklist "$value" 2>/dev/null
-				dbg "已从ipset移除(IPv4): $value"
-				;;
-			"ipv6")
-				ipset del devgate_blacklist6 "$value" 2>/dev/null
-				ipset del devgate_input_blacklist6 "$value" 2>/dev/null
-				dbg "已从ipset移除(IPv6): $value"
-				;;
-		esac
+		info "错误: MAC识别需要nftables支持，iptables后端无可移除规则"
+		return 1
 	fi
 }
 
@@ -454,20 +362,7 @@ show_firewall_status() {
 		nft list table inet devgate 2>/dev/null || echo "  未找到devgate表"
 	elif [ -n "$iptables_ver" ]; then
 		echo "iptables规则:"
-		echo "FORWARD链:"
-		iptables -L FORWARD -n | grep -i devgate || echo "  未找到devgate规则"
-		ip6tables -L FORWARD -n | grep -i devgate || echo "  未找到IPv6 devgate规则"
-
-		echo ""
-		echo "INPUT链:"
-		iptables -L INPUT -n | grep -i devgate || echo "  未找到devgate规则"
-		ip6tables -L INPUT -n | grep -i devgate || echo "  未找到IPv6 devgate规则"
-
-		echo ""
-		echo "ipset内容:"
-		ipset list devgate_blacklist 2>/dev/null | head -20 || echo "  devgate_blacklist未找到"
-		echo ""
-		ipset list devgate_blacklist6 2>/dev/null | head -20 || echo "  devgate_blacklist6未找到"
+		echo "  MAC识别需要nftables支持，iptables后端不启用DevGate规则"
 	fi
 }
 
@@ -557,7 +452,7 @@ case "$crrun" in
 			exit 1
 		}
 		info "添加设备控制: ID=$crid"
-		add_device "$crid"
+		add_device "$crid" || exit 1
 		show_firewall_status
 		;;
 
@@ -567,7 +462,7 @@ case "$crrun" in
 			exit 1
 		}
 		info "移除设备控制: ID=$crid"
-		del_device "$crid"
+		del_device "$crid" || exit 1
 		show_firewall_status
 		;;
 
@@ -580,9 +475,9 @@ case "$crrun" in
 		;;
 
 	"test")
-		# 测试地址解析
-		echo "测试地址解析:"
-		for test in "192.168.1.100" "192.168.1.0/24" "00:11:22:33:44:55" "invalid"; do
+		# 测试目标MAC解析
+		echo "测试目标MAC解析:"
+		for test in "00:11:22:33:44:55" "192.168.1.100" "invalid"; do
 			echo -n "$test: "
 			if parse_target "$test" >/dev/null; then
 				echo "✓ 有效"
