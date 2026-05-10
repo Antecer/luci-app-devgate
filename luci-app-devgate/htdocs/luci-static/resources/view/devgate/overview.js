@@ -146,10 +146,25 @@ function setupRulesLayout(mapEl) {
 
 	section.classList.add('devgate-rules-section');
 
+	var title = null;
+	var children = section.children;
+
+	for (var i = 0; i < children.length; i++) {
+		if (children[i].tagName === 'H3' || children[i].classList.contains('cbi-section-title')) {
+			title = children[i];
+			break;
+		}
+	}
+
 	var actions = section.querySelector('.cbi-section-create, .cbi-section-actions');
 
 	if (actions) {
 		actions.classList.add('devgate-rules-actions');
+
+		if (title) {
+			title.classList.add('devgate-rules-title');
+			title.appendChild(actions);
+		}
 	}
 
 	var table = section.querySelector('.cbi-section-table');
