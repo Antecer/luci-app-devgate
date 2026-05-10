@@ -135,6 +135,46 @@ function renderStylesheet() {
 	});
 }
 
+function getOuterHeight(node) {
+	if (!node) {
+		return 0;
+	}
+
+	var style = window.getComputedStyle(node);
+
+	if (style.display === 'none' || style.visibility === 'hidden') {
+		return 0;
+	}
+
+	var rect = node.getBoundingClientRect();
+
+	return rect.height + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+}
+
+function updatePageHeight(pageEl) {
+	var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+	var pageTop = pageEl.getBoundingClientRect().top;
+	var footerHeight = getOuterHeight(document.querySelector('footer, #footer, .footer'));
+	var pageHeight = Math.floor(viewportHeight - pageTop - footerHeight);
+
+	if (pageHeight > 0) {
+		pageEl.style.setProperty('--devgate-page-height', '%dpx'.format(pageHeight));
+	}
+}
+
+function setupPageHeight(pageEl) {
+	var update = function () {
+		window.requestAnimationFrame(function () {
+			updatePageHeight(pageEl);
+		});
+	};
+
+	update();
+	window.addEventListener('resize', update, { passive: true });
+	window.addEventListener('orientationchange', update, { passive: true });
+	window.setTimeout(update, 250);
+}
+
 function setupRulesLayout(mapEl) {
 	var section = mapEl.querySelector('.cbi-section');
 
@@ -597,11 +637,15 @@ return view.extend({
 		return m.render().then(function (mapEl) {
 			setupRulesLayout(mapEl);
 
-			return E('div', { 'class': 'devgate-page' }, [
+			var pageEl = E('div', { 'class': 'devgate-page' }, [
 				renderStylesheet(),
 				renderPageHeader(data[3], data[4]),
 				mapEl
 			]);
+
+			setupPageHeight(pageEl);
+
+			return pageEl;
 		});
 	}
 });

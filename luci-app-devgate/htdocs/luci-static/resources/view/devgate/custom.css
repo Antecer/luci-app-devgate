@@ -1,3 +1,10 @@
+.devgate-page {
+	display: flex;
+	flex-direction: column;
+	height: var(--devgate-page-height, auto);
+	min-height: 0;
+}
+
 .devgate-page-header h2,
 .devgate-rules-title {
 	display: flex;
@@ -20,9 +27,22 @@
 	margin-left: auto;
 }
 
+.devgate-page > .cbi-map,
+.devgate-page .devgate-rules-section,
+.devgate-page .cbi-section-node {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.devgate-page .cbi-page-actions {
+	flex: 0 0 auto;
+}
+
 .devgate-rules-table-scroll {
-	min-height: 60vh;
-	max-height: calc(100vh - 18rem);
+	flex: 1 1 auto;
+	min-height: 0;
 	overflow: auto;
 }
 
