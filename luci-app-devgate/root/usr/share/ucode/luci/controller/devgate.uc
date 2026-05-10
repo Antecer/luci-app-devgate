@@ -1,7 +1,13 @@
 'use strict';
 
 function append_addr(list, http, name) {
-	let value = http.getenv(name) || '';
+	let value = '';
+
+	if (http)
+		value = http.getenv(name) || '';
+
+	if (!value)
+		value = getenv(name) || '';
 
 	if (value)
 		push(list, value);
@@ -11,11 +17,6 @@ function remote_addr(env) {
 	let http = env && env.http;
 	let addr = '';
 	let values = [];
-
-	if (!http) {
-		print('');
-		return;
-	}
 
 	append_addr(values, http, 'HTTP_X_FORWARDED_FOR');
 	append_addr(values, http, 'HTTP_X_REAL_IP');

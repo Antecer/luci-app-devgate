@@ -456,6 +456,120 @@ function getHostIps(host) {
 	return ips;
 }
 
+function isIpv4(ip) {
+	return /^([0-9]{1,3}\.){3}[0-9]{1,3}$/.test(ip);
+}
+
+function ipv4ToInt(ip) {
+	var parts = String(ip || '').split('.');
+
+	if (parts.length !== 4) {
+		return null;
+	}
+
+	var value = 0;
+
+	for (var i = 0; i < parts.length; i++) {
+		var part = Number(parts[i]);
+
+		if (!Number.isInteger(part) || part < 0 || part > 255) {
+			return null;
+		}
+
+		value = (value << 8) + part;
+	}
+
+	return value >>> 0;
+}
+
+function maskToPrefix(mask) {
+	var value = ipv4ToInt(mask);
+	var prefix = 0;
+	var seenZero = false;
+
+	if (value == null) {
+		return null;
+	}
+
+	for (var i = 31; i >= 0; i--) {
+		if (value & (1 << i)) {
+			if (seenZero) {
+				return null;
+			}
+
+			prefix++;
+		} else {
+			seenZero = true;
+		}
+	}
+
+	return prefix;
+}
+
+function getLanNetworks() {
+	var ipaddr = uci.get('network', 'lan', 'ipaddr');
+	var netmask = uci.get('network', 'lan', 'netmask');
+	var ipaddrs = L.toArray(ipaddr);
+	var networks = [];
+
+	ipaddrs.forEach(function (value) {
+		var ip = String(value || '').trim();
+		var prefix = null;
+		var slash = ip.indexOf('/');
+
+		if (slash !== -1) {
+			prefix = Number(ip.substring(slash + 1));
+			ip = ip.substring(0, slash);
+		} else {
+			prefix = maskToPrefix(netmask || '255.255.255.0');
+		}
+
+		var addr = ipv4ToInt(ip);
+
+		if (addr == null || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+			return;
+		}
+
+		var mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+
+		networks.push({
+			network: addr & mask,
+			mask: mask
+		});
+	});
+
+	return networks;
+}
+
+function isInNetworks(ip, networks) {
+	var addr = ipv4ToInt(ip);
+
+	if (addr == null || networks.length === 0) {
+		return false;
+	}
+
+	for (var i = 0; i < networks.length; i++) {
+		if ((addr & networks[i].mask) === networks[i].network) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+function getHostIpv4s(host) {
+	return getHostIps(host).filter(isIpv4);
+}
+
+function formatHostOption(mac, host, ipv4s) {
+	var normalizedMac = normalizeMac(mac) || String(mac || '').trim();
+	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('未知IP');
+	var name = String(host && host.name || '').trim();
+	var text = '%s (%s)'.format(normalizedMac.toUpperCase(), ipText);
+
+	return name ? '%s %s'.format(text, name) : text;
+}
+
 function protectHost(protectedClient, mac, host) {
 	var normalizedMac = normalizeMac(mac);
 	var ips = getHostIps(host);
@@ -541,6 +655,7 @@ return view.extend({
 	load: function () {
 		return Promise.all([
 			uci.load('devgate'),
+			uci.load('network'),
 			getHostHints(),
 			getCurrentClient(),
 			getPackageVersion(),
@@ -550,9 +665,10 @@ return view.extend({
 
 	render: function (data) {
 		var m, s, o;
-		var hostHints = data[1];
+		var hostHints = data[2];
 		var hosts = getHostEntries(hostHints);
-		var protectedClient = buildProtectedClient(hostHints, data[2]);
+		var protectedClient = buildProtectedClient(hostHints, data[3]);
+		var lanNetworks = getLanNetworks();
 
 		m = new form.Map('devgate');
 
@@ -589,15 +705,16 @@ return view.extend({
 
 			Object.keys(hosts).forEach(function (mac) {
 				var host = hosts[mac];
-				var name = host.name || _(' ');
 				var ips = getHostIps(host);
+				var lanIpv4s = getHostIpv4s(host).filter(function (ip) {
+					return isInNetworks(ip, lanNetworks);
+				});
 
-				if (isProtectedHost(mac, ips, protectedClient)) {
+				if (lanIpv4s.length === 0 || isProtectedHost(mac, ips, protectedClient)) {
 					return;
 				}
 
-				var ipText = ips.length > 0 ? ips.join(', ') : _('未知IP');
-				hostOptions[mac] = '%s（%s）'.format(name, ipText);
+				hostOptions[mac] = formatHostOption(mac, host, lanIpv4s);
 			});
 			var sortedKeys = Object.keys(hostOptions).sort(function (a, b) {
 				return hostOptions[a].localeCompare(hostOptions[b]);
@@ -681,7 +798,7 @@ return view.extend({
 
 			var pageEl = E('div', { 'class': 'devgate-page' }, [
 				renderStylesheet(),
-				renderPageHeader(data[3], data[4]),
+				renderPageHeader(data[4], data[5]),
 				mapEl
 			]);
 

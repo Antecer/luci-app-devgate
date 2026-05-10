@@ -27,8 +27,8 @@ endef
 define Package/$(PKG_NAME)/prerm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
-	[ -x /etc/init.d/devgate ] && /etc/init.d/devgate stop >/dev/null 2>&1
-	[ -x /usr/bin/devgate ] && /usr/bin/devgate stop >/dev/null 2>&1
+	[ -x /etc/init.d/devgate ] && /etc/init.d/devgate stop >/dev/null 2>&1 || true
+	[ -x /usr/bin/devgate ] && /usr/bin/devgate stop >/dev/null 2>&1 || true
 	rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-*cache
 }
 exit 0

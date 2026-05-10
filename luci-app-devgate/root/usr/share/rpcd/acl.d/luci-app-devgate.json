@@ -20,7 +20,8 @@
 				]
 			},
 			"uci": [
-				"devgate"
+				"devgate",
+				"network"
 			]
 		},
 		"write": {
