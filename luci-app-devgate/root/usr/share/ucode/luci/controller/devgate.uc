@@ -12,8 +12,10 @@ function remote_addr(env) {
 	let addr = '';
 	let values = [];
 
-	if (!http)
-		return '';
+	if (!http) {
+		print('');
+		return;
+	}
 
 	append_addr(values, http, 'HTTP_X_FORWARDED_FOR');
 	append_addr(values, http, 'HTTP_X_REAL_IP');
@@ -25,7 +27,7 @@ function remote_addr(env) {
 	for (let value in values)
 		addr += value + '\n';
 
-	return addr;
+	print(addr);
 }
 
 return {
