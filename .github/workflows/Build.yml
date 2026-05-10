@@ -11,7 +11,7 @@ env:
   TARGET: "x86"
   SUBTARGET: "64"
   PACKAGE_NAME: "luci-app-devgate"
-  PACKAGE_DEPENDS: "bc, nftables, bash, conntrack"
+  PACKAGE_DEPENDS: "nftables, bash"
   SDK_CACHE_VERSION: "ci-extra-depends-v1"
   BUILD_TIMEZONE: "Asia/Shanghai"
 

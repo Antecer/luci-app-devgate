@@ -7,7 +7,7 @@ PKG_LICENSE:=Apache-2.0
 
 LUCI_TITLE:=LuCI 设备门禁插件
 LUCI_DESCRIPTION:=基于 nftables 的设备门禁插件。
-LUCI_DEPENDS:=+bc +nftables +bash +conntrack
+LUCI_DEPENDS:=+nftables +bash
 LUCI_PKGARCH:=all
 LUCI_MINIFY_CSS:=0
 

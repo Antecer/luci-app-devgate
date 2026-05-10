@@ -17,7 +17,6 @@ IDLIST="/var/$NAME.idlist"
 bin_nft=$(which nft 2>/dev/null)
 bin_iptables=$(which iptables 2>/dev/null)
 bin_ip6tables=$(which ip6tables 2>/dev/null)
-bin_conntrack=$(which conntrack 2>/dev/null)
 
 get_device_chain() {
 	local id="$1"
@@ -125,43 +124,6 @@ parse_target() {
 
 	mac=$(resolve_target_mac "$1") || return 1
 	echo "mac:single:$mac"
-}
-
-# 清理现有连接
-flush_connections() {
-	local target="$1"
-
-	[ -x "$bin_conntrack" ] || {
-		dbg "conntrack不可用"
-		return
-	}
-
-	local parsed_result=$(parse_target "$target")
-	[ $? -eq 0 ] || {
-		dbg "无法解析地址用于清理连接: $target"
-		return
-	}
-
-	IFS=':' read -r type subtype value <<< "$parsed_result"
-
-	dbg "清理连接: type=$type, value=$value"
-
-	case "$type" in
-		"ipv4")
-			$bin_conntrack -D -s "$value" 2>/dev/null && dbg "清理源连接: $value"
-			$bin_conntrack -D -d "$value" 2>/dev/null && dbg "清理目标连接: $value"
-			;;
-		"mac")
-			# MAC地址需要先转换为IP
-			if [ -f "/proc/net/arp" ]; then
-				local ip_addr=$(grep -i "$value" /proc/net/arp 2>/dev/null | awk '{print $1}' | head -1)
-				if [ -n "$ip_addr" ]; then
-					$bin_conntrack -D -s "$ip_addr" 2>/dev/null && dbg "清理MAC源连接: $value -> $ip_addr"
-					$bin_conntrack -D -d "$ip_addr" 2>/dev/null && dbg "清理MAC目标连接: $value -> $ip_addr"
-				fi
-			fi
-			;;
-	esac
 }
 
 # 检查防火墙工具
@@ -289,12 +251,6 @@ add_device() {
 	elif [ -n "$iptables_ver" ]; then
 		info "错误: MAC识别需要nftables支持，iptables后端不启用设备 $target"
 		return 1
-	fi
-
-	# 禁止访问全部网络时清理现有连接，让规则立即生效
-	if [ "$device_chain" = "input" ]; then
-		dbg "禁止访问全部网络，清理现有连接"
-		flush_connections "$target"
 	fi
 
 	# 验证规则
@@ -504,21 +460,10 @@ case "$crrun" in
 		done
 		;;
 
-	"flush")
-		# 清理所有连接
-		info "清理所有连接"
-		if [ -x "$bin_conntrack" ]; then
-			$bin_conntrack -F
-			info "连接已清理"
-		else
-			info "conntrack不可用"
-		fi
-		;;
-
 	"help"|"")
 		echo "设备门禁系统命令工具"
 		echo ""
-		echo "用法: $0 {start|stop|add <id>|del <id>|status|diagnose|test|flush|help}"
+		echo "用法: $0 {start|stop|add <id>|del <id>|status|diagnose|test|help}"
 		echo ""
 		echo "命令说明:"
 		echo "  start           - 初始化防火墙规则"
@@ -528,7 +473,6 @@ case "$crrun" in
 		echo "  status          - 显示防火墙状态"
 		echo "  diagnose        - 系统诊断"
 		echo "  test            - 测试地址解析"
-		echo "  flush           - 清理所有网络连接"
 		echo "  help            - 显示此帮助信息"
 		;;
 
