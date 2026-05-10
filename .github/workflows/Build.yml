@@ -2,6 +2,9 @@ name: Build OpenWrt IPK
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "luci-app-devgate/**"
 
 env:
   OPENWRT_VERSION: "24.10.6"
