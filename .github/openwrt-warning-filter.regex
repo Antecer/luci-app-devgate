@@ -1,0 +1,9 @@
+^WARNING: Makefile 'package/kernel/linux/Makefile' has a dependency on '(eip197-mini-firmware|airoha-en8811h-firmware|r8169-firmware|e100-firmware|bnx2-firmware|bnx2x-firmware|ar3k-firmware|mwifiex-sdio-firmware|kmod-phy-bcm-ns-usb2|edgeport-firmware|r8152-firmware|kmod-phy-bcm-ns-usb3|amdgpu-firmware|i915-firmware-dmc|radeon-firmware|kmod-gpio-button-hotplug|nu801)', which does not exist$
+^WARNING: Makefile 'package/feeds/packages/luasrcdiet/Makefile' has a dependency on 'lua', which does not exist$
+^WARNING: Makefile 'package/feeds/packages/luasrcdiet/Makefile' has a build dependency on 'lua/host', which does not exist$
+^WARNING: Makefile 'package/luci-app-devgate/Makefile' has a build dependency on 'lua/host', which does not exist$
+^WARNING: Makefile 'package/feeds/luci/luci-base/Makefile' has a dependency on '(rpcd|rpcd-mod-file|rpcd-mod-luci|rpcd-mod-ucode|cgi-io|ucode|ucode-mod-fs|ucode-mod-uci|ucode-mod-ubus|ucode-mod-math|ucode-mod-html|liblucihttp-ucode)', which does not exist$
+^WARNING: Makefile 'package/feeds/luci/luci-base/Makefile' has a build dependency on 'lua/host', which does not exist$
+^tmp/\.config-package\.in:[0-9]+:warning: ignoring type redefinition of 'LUCI_LANG_[^']+' from 'bool' to 'tristate'$
+^tmp/\.config-(package|feeds)\.in:[0-9]+:warning: ignoring type redefinition of '[^']+' from 'bool' to 'tristate'$
+^Config-build\.in:[0-9]+:warning: defaults for choice values not supported$

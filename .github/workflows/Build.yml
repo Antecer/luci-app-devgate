@@ -1,0 +1,155 @@
+name: Build OpenWrt IPK
+
+on:
+  workflow_dispatch:
+
+env:
+  OPENWRT_VERSION: "24.10.6"
+  TARGET: "x86"
+  SUBTARGET: "64"
+  PACKAGE_NAME: "luci-app-devgate"
+  PACKAGE_DEPENDS: "bc, nftables, bash, conntrack"
+  SDK_CACHE_VERSION: "ci-extra-depends-v1"
+  BUILD_TIMEZONE: "Asia/Shanghai"
+
+jobs:
+  build:
+    name: Build OpenWrt IPK
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set build version
+        id: build-version
+        run: |
+          set -eux
+          build_version="$(TZ="${BUILD_TIMEZONE}" date '+%y%m%d%H%M')"
+          echo "BUILD_VERSION=${build_version}" >> "$GITHUB_ENV"
+          echo "version=${build_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang flex bison gawk gettext git \
+            libncurses-dev libssl-dev python3 python3-pyelftools \
+            rsync unzip zlib1g-dev file curl wget zstd
+
+      - name: Restore OpenWrt SDK cache
+        id: sdk-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: sdk
+          key: openwrt-sdk-${{ env.SDK_CACHE_VERSION }}-${{ runner.os }}-${{ env.OPENWRT_VERSION }}-${{ env.TARGET }}-${{ env.SUBTARGET }}
+
+      - name: Download OpenWrt SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          base_url="https://downloads.openwrt.org/releases/${OPENWRT_VERSION}/targets/${TARGET}/${SUBTARGET}"
+          sdk_file="$(curl -fsSL "${base_url}/" | grep -o "openwrt-sdk-${OPENWRT_VERSION}-${TARGET}-${SUBTARGET}_[^\"]*Linux-x86_64.tar.zst" | head -n1)"
+          test -n "$sdk_file"
+          curl -fsSL -o "$sdk_file" "${base_url}/${sdk_file}"
+          tar --zstd -xf "$sdk_file"
+          mv "${sdk_file%.tar.zst}" sdk
+
+      - name: Initialize OpenWrt SDK feeds
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          if [ -f sdk/.config ]; then
+            mv sdk/.config sdk/.config.sdk
+          fi
+          ./sdk/scripts/feeds update luci packages
+          if [ -f sdk/.config.sdk ]; then
+            mv sdk/.config.sdk sdk/.config
+          fi
+
+          link_feed_package() {
+            feed="$1"
+            package="$2"
+            package_makefile="$(find "sdk/feeds/${feed}" -type f -path "*/${package}/Makefile" -print -quit)"
+            if [ -z "$package_makefile" ]; then
+              package_makefile="$(grep -R -l --include=Makefile -E "^(PKG_NAME|PKG_SOURCE_NAME):=${package}$|^define Package/${package}([[:space:]/]|$)" "sdk/feeds/${feed}" | head -n1)"
+            fi
+            if [ -z "$package_makefile" ]; then
+              echo "::error::Package '${package}' not found in feed '${feed}'"
+              exit 1
+            fi
+
+            package_dir="${package_makefile%/Makefile}"
+            mkdir -p "sdk/package/feeds/${feed}"
+            ln -sfn "../../../${package_dir#sdk/}" "sdk/package/feeds/${feed}/"
+          }
+
+          link_feed_package luci luci-base
+          link_feed_package luci csstidy
+          link_feed_package packages luasrcdiet
+          link_feed_package packages lua
+
+      - name: Save OpenWrt SDK cache
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        continue-on-error: true
+        with:
+          path: sdk
+          key: openwrt-sdk-${{ env.SDK_CACHE_VERSION }}-${{ runner.os }}-${{ env.OPENWRT_VERSION }}-${{ env.TARGET }}-${{ env.SUBTARGET }}
+
+      - name: Prepare package
+        run: |
+          set -eux
+          rm -rf "sdk/package/${PACKAGE_NAME}"
+          cp -a "${PACKAGE_NAME}" "sdk/package/${PACKAGE_NAME}"
+          sed -i -E "s/^PKG_VERSION:=.*/PKG_VERSION:=${BUILD_VERSION}/" "sdk/package/${PACKAGE_NAME}/Makefile"
+          sed -i -E "s/^PKG_RELEASE:=.*/PKG_RELEASE:=/" "sdk/package/${PACKAGE_NAME}/Makefile"
+          sed -i -E "s/^LUCI_DEPENDS:=.*/LUCI_DEPENDS:=/" "sdk/package/${PACKAGE_NAME}/Makefile"
+          if grep -q '^LUCI_EXTRA_DEPENDS:=' "sdk/package/${PACKAGE_NAME}/Makefile"; then
+            sed -i -E "s/^LUCI_EXTRA_DEPENDS:=.*/LUCI_EXTRA_DEPENDS:=${PACKAGE_DEPENDS}/" "sdk/package/${PACKAGE_NAME}/Makefile"
+          else
+            sed -i "/^LUCI_DEPENDS:=/a LUCI_EXTRA_DEPENDS:=${PACKAGE_DEPENDS}" "sdk/package/${PACKAGE_NAME}/Makefile"
+          fi
+          grep -E '^(PKG_VERSION|PKG_RELEASE|LUCI_DEPENDS|LUCI_EXTRA_DEPENDS):=' "sdk/package/${PACKAGE_NAME}/Makefile"
+
+      - name: Build package
+        working-directory: sdk
+        shell: bash
+        run: |
+          set -eu
+
+          metadata_warning_filter="${GITHUB_WORKSPACE}/.github/openwrt-warning-filter.regex"
+          test -s "$metadata_warning_filter"
+
+          run_filtered_make() {
+            set +e
+            "$@" 2>&1 | grep -v -E -f "$metadata_warning_filter"
+            status="${PIPESTATUS[0]}"
+            set -e
+            return "$status"
+          }
+
+          run_filtered_make make defconfig
+          run_filtered_make make "package/${PACKAGE_NAME}/compile" V=s
+
+      - name: Collect artifacts
+        run: |
+          set -eux
+          mkdir -p artifacts
+          find sdk/bin/packages -type f -name "${PACKAGE_NAME}_*.ipk" -print -exec cp -v {} artifacts/ \;
+          test -n "$(find artifacts -type f -name "${PACKAGE_NAME}_*.ipk" -print -quit)"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: openwrt-${{ env.OPENWRT_VERSION }}-${{ env.TARGET }}_${{ env.SUBTARGET }}-${{ env.PACKAGE_NAME }}-${{ steps.build-version.outputs.version }}
+          path: artifacts/${{ env.PACKAGE_NAME }}_*.ipk
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: artifacts/${{ env.PACKAGE_NAME }}_*.ipk

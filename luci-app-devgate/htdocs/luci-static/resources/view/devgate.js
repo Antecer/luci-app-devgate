@@ -1,0 +1,574 @@
+// SPDX-License-Identifier: Apache-2.0
+'use strict';
+'require view';
+'require ui';
+'require uci';
+'require form';
+'require poll';
+'require fs';
+'require request';
+'require network';
+
+function renderServiceStatus(isRunning, pid) {
+	var statusText = isRunning ? _('运行中') : _('未运行');
+	var color = isRunning ? 'green' : 'red';
+	var icon = isRunning ? '✓' : '✗';
+
+	var statusHtml = String.format(
+		'<em><span style="color:%s">%s <strong>%s</strong></span></em>',
+		color, icon, statusText
+	);
+
+	if (isRunning && pid) {
+		statusHtml += ' <small>(进程 ID：' + pid + ')</small>';
+	}
+
+	return statusHtml;
+}
+
+function parseServiceStatus(text) {
+	var status = {
+		running: false,
+		pid: null
+	};
+
+	try {
+		var data = JSON.parse(String(text || '').trim() || '{}');
+		status.running = !!data.running;
+		status.pid = data.pid || null;
+	} catch (e) {
+		var value = String(text || '').trim();
+
+		if (value === 'running') {
+			status.running = true;
+		}
+	}
+
+	return status;
+}
+
+function getServiceStatus() {
+	return L.resolveDefault(fs.exec_direct('/etc/init.d/devgate', ['actual']), '')
+		.then(parseServiceStatus)
+		.catch(function () {
+			return {
+				running: false,
+				pid: null
+			};
+		});
+}
+
+function getPackageVersion() {
+	return L.resolveDefault(fs.read_direct('/usr/lib/opkg/status'), '')
+		.then(function (status) {
+			var block = String(status || '').match(/(^|\n)Package:\s*luci-app-devgate\n([\s\S]*?)(\n\n|$)/);
+			var version = block ? block[2].match(/(^|\n)Version:\s*([^\s]+)/) : null;
+
+			return version ? version[2] : 'unknown';
+		})
+		.catch(function () {
+			return 'unknown';
+		});
+}
+
+function renderPageHeader(version) {
+	return E('div', { 'class': 'devgate-page-header' }, [
+		E('h2', {}, 'DevGate_v%s'.format(version || 'unknown'))
+	]);
+}
+
+function renderStyle() {
+	return E('style', [`
+		.devgate-page-header {
+			margin: 0 0 1rem 0;
+		}
+		.devgate-page-header h2 {
+			margin: 0;
+			font-size: 1.625rem;
+			font-weight: 600;
+			line-height: 1.25;
+		}
+	`]);
+}
+
+function normalizeIp(ip) {
+	if (ip == null) {
+		return null;
+	}
+
+	ip = String(ip).trim();
+
+	if (ip === '') {
+		return null;
+	}
+
+	if (ip.indexOf(',') !== -1) {
+		ip = ip.split(',')[0].trim();
+	}
+
+	if (ip.indexOf('::ffff:') === 0) {
+		ip = ip.substring(7);
+	}
+
+	if (/^\[[0-9a-fA-F:]+\](?::\d+)?$/.test(ip)) {
+		return ip.replace(/^\[/, '').replace(/\](?::\d+)?$/, '').toLowerCase();
+	}
+
+	if (/^([0-9]{1,3}\.){3}[0-9]{1,3}:\d+$/.test(ip)) {
+		ip = ip.replace(/:\d+$/, '');
+	}
+
+	if (/^([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]{1,2}$/.test(ip)) {
+		ip = ip.replace(/\/[0-9]{1,2}$/, '');
+	} else if (/^[0-9a-fA-F:]+\/[0-9]{1,3}$/.test(ip)) {
+		ip = ip.replace(/\/[0-9]{1,3}$/, '');
+	}
+
+	return ip.toLowerCase();
+}
+
+function normalizeMac(mac) {
+	if (mac == null) {
+		return null;
+	}
+
+	mac = String(mac).trim().toLowerCase();
+
+	return /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac) ? mac : null;
+}
+
+function getEnvRemoteAddress() {
+	var keys = ['remote_addr', 'REMOTE_ADDR', 'peeraddr', 'client_ip'];
+
+	for (var i = 0; i < keys.length; i++) {
+		var value = normalizeIp(L.env && L.env[keys[i]]);
+
+		if (value) {
+			return value;
+		}
+	}
+
+	return null;
+}
+
+function responseText(res) {
+	if (!res) {
+		return '';
+	}
+
+	if (typeof res.text === 'function') {
+		return res.text();
+	}
+
+	if (typeof res.text === 'string') {
+		return res.text;
+	}
+
+	if (typeof res.responseText === 'string') {
+		return res.responseText;
+	}
+
+	if (res.xhr && typeof res.xhr.responseText === 'string') {
+		return res.xhr.responseText;
+	}
+
+	return '';
+}
+
+function parseRemoteAddressResponse(text) {
+	var ip = normalizeIp(text);
+
+	if (ip && /^[0-9a-f:.]+$/.test(ip)) {
+		return ip;
+	}
+
+	try {
+		var data = JSON.parse(text);
+		return normalizeIp(data && (data.ipaddr || data.ip || data.remote_addr || data.address));
+	} catch (e) {
+		return null;
+	}
+}
+
+function requestRemoteAddress(path) {
+	return request.get(L.url(path))
+		.then(function (res) {
+			if (res && typeof res.json === 'function') {
+				try {
+					var data = res.json();
+					var jsonIp = normalizeIp(data && (data.ipaddr || data.ip || data.remote_addr || data.address));
+
+					if (jsonIp) {
+						return jsonIp;
+					}
+				} catch (e) { }
+			}
+
+			return Promise.resolve(responseText(res)).then(function (text) {
+				return parseRemoteAddressResponse(text);
+			});
+		})
+		.catch(function () {
+			return null;
+		});
+}
+
+function getCurrentClient() {
+	var envIp = getEnvRemoteAddress();
+
+	if (envIp) {
+		return Promise.resolve({ ip: envIp });
+	}
+
+	return requestRemoteAddress('admin/services/devgate/remote_addr')
+		.then(function (ip) {
+			return ip || requestRemoteAddress('admin/network/remote_addr');
+		})
+		.then(function (ip) {
+			return { ip: ip || null };
+		});
+}
+
+function getHostEntries(hostHints) {
+	if (!hostHints) {
+		return {};
+	}
+
+	return hostHints.hosts || hostHints;
+}
+
+function normalizeHostIp(value) {
+	if (value && typeof value === 'object') {
+		value = value.address || value.ipaddr || value.ip || value[0];
+	}
+
+	return normalizeIp(value);
+}
+
+function getHostIps(host) {
+	var seen = {};
+	var ips = [];
+	var fields = ['ipaddrs', 'ipv4', 'ip6addrs', 'ipv6'];
+
+	fields.forEach(function (field) {
+		L.toArray(host && host[field]).forEach(function (value) {
+			var ip = normalizeHostIp(value);
+
+			if (ip && !seen[ip]) {
+				seen[ip] = true;
+				ips.push(ip);
+			}
+		});
+	});
+
+	return ips;
+}
+
+function protectHost(protectedClient, mac, host) {
+	var normalizedMac = normalizeMac(mac);
+	var ips = getHostIps(host);
+
+	if (normalizedMac) {
+		protectedClient.macs[normalizedMac] = true;
+	}
+
+	for (var i = 0; i < ips.length; i++) {
+		protectedClient.ips[ips[i]] = true;
+	}
+}
+
+function buildProtectedClient(hostHints, currentClient) {
+	var protectedClient = {
+		ips: {},
+		macs: {}
+	};
+	var hosts = getHostEntries(hostHints);
+
+	if (currentClient && currentClient.ip) {
+		protectedClient.ips[currentClient.ip] = true;
+
+		if (hostHints && typeof hostHints.getMACAddrByIPAddr === 'function') {
+			var matchedMac = normalizeMac(hostHints.getMACAddrByIPAddr(currentClient.ip));
+
+			if (matchedMac) {
+				if (hosts[matchedMac]) {
+					protectHost(protectedClient, matchedMac, hosts[matchedMac]);
+				} else {
+					protectedClient.macs[matchedMac] = true;
+				}
+			}
+		}
+	}
+
+	Object.keys(hosts).forEach(function (mac) {
+		var host = hosts[mac];
+		var ips = getHostIps(host);
+		var isCurrentHost = false;
+
+		for (var i = 0; i < ips.length; i++) {
+			if (protectedClient.ips[ips[i]]) {
+				isCurrentHost = true;
+				break;
+			}
+		}
+
+		if (isCurrentHost) {
+			protectHost(protectedClient, mac, host);
+		}
+	});
+
+	return protectedClient;
+}
+
+function isProtectedTarget(value, protectedClient) {
+	var ip = normalizeIp(value);
+	var mac = normalizeMac(value);
+
+	return !!((ip && protectedClient.ips[ip]) || (mac && protectedClient.macs[mac]));
+}
+
+function isProtectedHost(mac, ips, protectedClient) {
+	var normalizedMac = normalizeMac(mac);
+
+	if (normalizedMac && protectedClient.macs[normalizedMac]) {
+		return true;
+	}
+
+	for (var i = 0; i < ips.length; i++) {
+		if (protectedClient.ips[ips[i]]) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+var cbiRichListValue = form.ListValue.extend({
+	renderWidget: function (section_id, option_index, cfgvalue) {
+		var choices = this.transformChoices();
+		var widget = new ui.Dropdown((cfgvalue != null) ? cfgvalue : this.default, choices, {
+			id: this.cbid(section_id),
+			sort: this.keylist,
+			optional: true,
+			select_placeholder: this.select_placeholder || this.placeholder,
+			custom_placeholder: this.custom_placeholder || this.placeholder,
+			validate: L.bind(this.validate, this, section_id),
+			disabled: (this.readonly != null) ? this.readonly : this.map.readonly
+		});
+
+		return widget.render();
+	},
+
+	value: function (value, title, description) {
+		if (description) {
+			form.ListValue.prototype.value.call(this, value, E([], [
+				E('span', { 'class': 'hide-open' }, [title]),
+				E('div', { 'class': 'hide-close', 'style': 'min-width:25vw' }, [
+					E('strong', [title]),
+					E('br'),
+					E('span', { 'style': 'white-space:normal' }, description)
+				])
+			]));
+		} else {
+			form.ListValue.prototype.value.call(this, value, title);
+		}
+	}
+});
+
+return view.extend({
+	load: function () {
+		return Promise.all([
+			uci.load('devgate'),
+			network.getHostHints(),
+			getCurrentClient(),
+			getPackageVersion()
+		]);
+	},
+
+	render: function (data) {
+		var m, s, o;
+		var hostHints = data[1];
+		var hosts = getHostEntries(hostHints);
+		var protectedClient = buildProtectedClient(hostHints, data[2]);
+
+		m = new form.Map('devgate', null,
+			_('按设备限制上网时段或可用时长。') + '<br/>' +
+			_('时段：仅在指定时间内允许上网。') + '<br/>' +
+			_('时长：上线后允许使用指定分钟数。') + '<br/>' +
+			_('组合：限定时段内再限制可用时长。') + '<br/>' +
+			_('问题反馈：') + ' <a href="https://github.com/Antecer/luci-app-devgate" target="_blank">项目主页</a>');
+
+		s = m.section(form.TypedSection);
+		s.anonymous = true;
+		s.render = function () {
+			var statusView = E('p', { id: 'service_status' },
+				'<span class="spinning"> </span> ' + _('正在检查服务状态...'));
+
+			getServiceStatus()
+				.then(function (res) {
+					var status = renderServiceStatus(res.running, res.pid);
+					statusView.innerHTML = status;
+				})
+				.catch(function (err) {
+					statusView.innerHTML = '<span style="color:orange">⚠ ' +
+						_('状态检查失败') + '</span>';
+					console.error('状态检查错误:', err);
+				});
+
+			poll.add(function () {
+				return getServiceStatus()
+					.then(function (res) {
+						var status = renderServiceStatus(res.running, res.pid);
+						statusView.innerHTML = status;
+					})
+					.catch(function (err) {
+						statusView.innerHTML = '<span style="color:orange">⚠ ' +
+							_('状态检查失败') + '</span>';
+						console.error('状态检查错误:', err);
+					});
+			}, 5);
+
+			poll.start();
+			return E('div', { class: 'cbi-section', id: 'status_bar' }, [
+				statusView
+			]);
+		};
+		var s = m.section(form.TableSection, 'device', _('设备规则'));
+		s.addremove = true;
+		s.anonymous = true;
+		s.sortable = false;
+
+		o = s.option(form.Value, 'comment', _('备注'));
+		o.optional = true;
+		o.placeholder = _('可选备注');
+
+		o = s.option(form.Flag, 'enable', _('启用'));
+		o.rmempty = false;
+		o.default = '1';
+
+		o = s.option(form.Value, 'mac', _('目标设备(IP 或 MAC)'));
+		o.rmempty = false;
+		// o.description = _('IP、CIDR、IP 范围或 MAC。');
+		o.validate = function (section_id, value) {
+			if (isProtectedTarget(value, protectedClient)) {
+				return _('不能选择当前登录设备。');
+			}
+
+			return true;
+		};
+
+		if (hosts) {
+			var hostOptions = {};
+
+			Object.keys(hosts).forEach(function (mac) {
+				var host = hosts[mac];
+				var name = host.name || _(' ');
+				var ips = getHostIps(host);
+
+				if (isProtectedHost(mac, ips, protectedClient)) {
+					return;
+				}
+
+				if (ips.length > 0) {
+					ips.forEach(function (ip) {
+						var macDisplay = 'MAC：%s（%s - %s）'.format(mac, ip, name);
+						hostOptions['mac:' + mac] = macDisplay;
+						var ipDisplay = 'IP：%s（%s - %s）'.format(ip, mac, name);
+						hostOptions['ip:' + ip] = ipDisplay;
+					});
+				}
+			});
+			var sortedKeys = Object.keys(hostOptions).sort(function (a, b) {
+				return hostOptions[a].localeCompare(hostOptions[b]);
+			});
+
+			sortedKeys.forEach(function (key) {
+				if (key.startsWith('ip:')) {
+					o.value(key.substring(3), hostOptions[key]);
+				}
+			});
+
+			sortedKeys.forEach(function (key) {
+				if (key.startsWith('mac:')) {
+					o.value(key.substring(4), hostOptions[key]);
+				}
+			});
+		}
+
+		o = s.option(cbiRichListValue, 'chain', _('管控强度'));
+		o.value('forward', _('禁止访问公共网络'));
+		o.value('input', _('禁止访问全部网络'));
+		o.default = 'forward';
+		o.rmempty = false;
+
+		// 控制方式选择
+		o = s.option(cbiRichListValue, 'time_mode', _('管控方式'));
+		o.value('period', _('按时段'));
+		o.value('duration', _('按时长'));
+		o.value('combined', _('时段 + 时长'));
+		o.default = 'period';
+		o.rmempty = false;
+
+		// 时间段控制字段
+		o = s.option(form.Value, 'timestart', _('开始时间'));
+		o.placeholder = '00:00';
+		o.default = '00:00';
+		o.depends({ 'time_mode': 'period', '!contains': true });
+		o.depends({ 'time_mode': 'combined', '!contains': true });
+
+		o = s.option(form.Value, 'timeend', _('结束时间'));
+		o.placeholder = '00:00';
+		o.default = '00:00';
+		o.depends({ 'time_mode': 'period', '!contains': true });
+		o.depends({ 'time_mode': 'combined', '!contains': true });
+
+		// 可用时长字段
+		o = s.option(form.Value, 'duration', _('可用时长（分钟）'));
+		o.placeholder = '60';
+		o.default = '60';
+		o.datatype = 'min(1)';
+		o.depends({ 'time_mode': 'duration', '!contains': true });
+		o.depends({ 'time_mode': 'combined', '!contains': true });
+		// o.description = _('上线后累计可用分钟数。');
+
+		// 重置周期
+		o = s.option(cbiRichListValue, 'reset_cycle', _('重置周期'));
+		o.value('daily', _('每日重置'));
+		o.value('weekly', _('每周重置'));
+		o.value('monthly', _('每月重置'));
+		o.value('never', _('不重置'));
+		o.default = 'daily';
+		o.depends({ 'time_mode': 'duration', '!contains': true });
+		o.depends({ 'time_mode': 'combined', '!contains': true });
+		// o.description = _('清零已用时长的周期。');
+
+		// 组合控制：是否在时间段内启用时长限制
+		o = s.option(form.Flag, 'use_duration', _('叠加时长限制'));
+		o.default = '0';
+		o.depends({ 'time_mode': 'combined', '!contains': true });
+		// o.description = _('在允许时段内继续限制可用时长。');
+
+		o = s.option(form.Value, 'week', _('生效日期'));
+		o.value('0', _('每天'));
+		o.value('1', _('周一'));
+		o.value('2', _('周二'));
+		o.value('3', _('周三'));
+		o.value('4', _('周四'));
+		o.value('5', _('周五'));
+		o.value('6', _('周六'));
+		o.value('7', _('周日'));
+		o.value('1,2,3,4,5', _('工作日'));
+		o.value('6,7', _('休息日'));
+		o.default = '0';
+		o.rmempty = false;
+		// o.description = _('规则生效的日期。');
+
+		return m.render().then(function (mapEl) {
+			return E([], [
+				renderStyle(),
+				renderPageHeader(data[3]),
+				mapEl
+			]);
+		});
+	}
+});
