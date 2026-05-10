@@ -566,7 +566,21 @@ function formatHostOption(mac, host, ipv4s) {
 	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('未知IP');
 	var name = String(host && host.name || '').trim() || _('未知设备');
 
-	return '%s\n%s\n%s'.format(name, normalizedMac.toUpperCase(), ipText);
+	return E('span', { 'class': 'devgate-host-option' }, [
+		name,
+		E('br'),
+		normalizedMac.toUpperCase(),
+		E('br'),
+		ipText
+	]);
+}
+
+function formatHostSortText(mac, host, ipv4s) {
+	var normalizedMac = normalizeMac(mac) || String(mac || '').trim();
+	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('未知IP');
+	var name = String(host && host.name || '').trim() || _('未知设备');
+
+	return '%s %s %s'.format(name, normalizedMac.toUpperCase(), ipText);
 }
 
 function protectHost(protectedClient, mac, host) {
@@ -701,6 +715,7 @@ return view.extend({
 
 		if (hosts) {
 			var hostOptions = {};
+			var hostSortText = {};
 
 			Object.keys(hosts).forEach(function (mac) {
 				var host = hosts[mac];
@@ -714,9 +729,10 @@ return view.extend({
 				}
 
 				hostOptions[mac] = formatHostOption(mac, host, lanIpv4s);
+				hostSortText[mac] = formatHostSortText(mac, host, lanIpv4s);
 			});
 			var sortedKeys = Object.keys(hostOptions).sort(function (a, b) {
-				return hostOptions[a].localeCompare(hostOptions[b]);
+				return hostSortText[a].localeCompare(hostSortText[b]);
 			});
 
 			sortedKeys.forEach(function (key) {
