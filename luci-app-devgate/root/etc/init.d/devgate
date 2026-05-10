@@ -32,7 +32,10 @@ start_instance() {
 _devgate_start() {
 	if uci show "$NAME" 2>/dev/null | grep -q "\.enable='1'"; then
 		touch "$LOCK"
-		devgate start
+		devgate start || {
+			rm -f "$LOCK" 2>/dev/null
+			return 1
+		}
 		sleep 2
 		start_instance
 	else

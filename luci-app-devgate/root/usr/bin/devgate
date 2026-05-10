@@ -45,6 +45,23 @@ info() {
 	echo "[$d] FW-INFO: $@" >> "$LOG_FILE"
 }
 
+run_nft() {
+	local output rc
+
+	output="$("$bin_nft" "$@" 2>&1)"
+	rc=$?
+
+	[ -n "$output" ] && {
+		while IFS= read -r line; do
+			dbg "nft: $line"
+		done <<-EOF
+		$output
+		EOF
+	}
+
+	return "$rc"
+}
+
 # MAC解析函数。IP只作为旧配置兼容输入，运行时始终解析成MAC再生效。
 normalize_mac() {
 	local mac
@@ -176,25 +193,23 @@ init_firewall() {
 		dbg "初始化nftables"
 
 		# 删除可能存在的旧表
-		nft delete table inet devgate 2>/dev/null
+		"$bin_nft" delete table inet devgate 2>/dev/null
 		sleep 1
 
 		# 创建新表
-		nft add table inet devgate
-		nft add chain inet devgate forward "{ type filter hook forward priority -100; policy accept; }"
+		run_nft add table inet devgate || return 1
+		run_nft add chain inet devgate forward "{ type filter hook forward priority -100; policy accept; }" || return 1
 
 		# 创建MAC黑名单集合
-		nft add set inet devgate blacklist_mac "{ type ether_addr; }"
-		nft add set inet devgate blacklist_mac_input "{ type ether_addr; }"
+		run_nft add set inet devgate blacklist_mac "{ type ether_addr; }" || return 1
+		run_nft add set inet devgate blacklist_mac_input "{ type ether_addr; }" || return 1
 
 		# 禁止访问公共网络：参考LuCI防火墙通信规则，匹配源MAC后拒绝转发。
-		nft add rule inet devgate forward meta nfproto ipv4 ether saddr @blacklist_mac counter reject comment "DevGate MAC IPv4 forward reject"
-		nft add rule inet devgate forward meta nfproto ipv6 ether saddr @blacklist_mac counter reject comment "DevGate MAC IPv6 forward reject"
+		run_nft add rule inet devgate forward ether saddr @blacklist_mac counter reject comment '"DevGate MAC forward reject"' || return 1
 
 		# 禁止访问全部网络：额外匹配访问路由器本机的INPUT流量
-		nft add chain inet devgate input "{ type filter hook input priority -100; policy accept; }"
-		nft add rule inet devgate input meta nfproto ipv4 ether saddr @blacklist_mac_input counter reject comment "DevGate MAC IPv4 input reject"
-		nft add rule inet devgate input meta nfproto ipv6 ether saddr @blacklist_mac_input counter reject comment "DevGate MAC IPv6 input reject"
+		run_nft add chain inet devgate input "{ type filter hook input priority -100; policy accept; }" || return 1
+		run_nft add rule inet devgate input ether saddr @blacklist_mac_input counter reject comment '"DevGate MAC input reject"' || return 1
 
 		info "nftables初始化完成"
 
@@ -212,7 +227,7 @@ stop_firewall() {
 	check_firewall_tool || return 1
 
 	if [ -n "$nftables_ver" ]; then
-		nft delete table inet devgate 2>/dev/null && info "nftables规则已删除"
+		"$bin_nft" delete table inet devgate 2>/dev/null && info "nftables规则已删除"
 	fi
 
 	if [ -n "$iptables_ver" ]; then
@@ -261,8 +276,8 @@ add_device() {
 		# nftables处理
 		case "$type" in
 			"mac")
-				nft add element inet devgate blacklist_mac "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
-				[ "$device_chain" = "input" ] && nft add element inet devgate blacklist_mac_input "{ $value }" 2>&1 | while read line; do dbg "nft: $line"; done
+				run_nft add element inet devgate blacklist_mac "{ $value }" || return 1
+				[ "$device_chain" = "input" ] && run_nft add element inet devgate blacklist_mac_input "{ $value }"
 				dbg "已添加到nftables黑名单(MAC): $value"
 				;;
 			*)
@@ -293,7 +308,7 @@ verify_firewall_rule() {
 	dbg "验证防火墙规则: $target"
 
 	if [ -n "$nftables_ver" ]; then
-		nft list table inet devgate 2>/dev/null | grep -qi "$target" && {
+		"$bin_nft" list table inet devgate 2>/dev/null | grep -qi "$target" && {
 			dbg "验证成功: $target 在nftables规则中"
 			return 0
 		}
@@ -331,8 +346,8 @@ del_device() {
 	if [ -n "$nftables_ver" ]; then
 		case "$type" in
 			"mac")
-				nft delete element inet devgate blacklist_mac "{ $value }" 2>/dev/null
-				nft delete element inet devgate blacklist_mac_input "{ $value }" 2>/dev/null
+				"$bin_nft" delete element inet devgate blacklist_mac "{ $value }" 2>/dev/null
+				"$bin_nft" delete element inet devgate blacklist_mac_input "{ $value }" 2>/dev/null
 				dbg "已从nftables移除(MAC): $value"
 				;;
 			*)
@@ -359,7 +374,7 @@ show_firewall_status() {
 
 	if [ -n "$nftables_ver" ]; then
 		echo "nftables规则:"
-		nft list table inet devgate 2>/dev/null || echo "  未找到devgate表"
+		"$bin_nft" list table inet devgate 2>/dev/null || echo "  未找到devgate表"
 	elif [ -n "$iptables_ver" ]; then
 		echo "iptables规则:"
 		echo "  MAC识别需要nftables支持，iptables后端不启用DevGate规则"
@@ -437,6 +452,7 @@ case "$crrun" in
 			show_firewall_status
 		else
 			info "设备门禁启动失败"
+			exit 1
 		fi
 		;;
 

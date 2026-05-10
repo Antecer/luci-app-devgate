@@ -208,8 +208,8 @@ check_device_control() {
 
 	case "$time_mode" in
 		"period")
-			local start_time=$(config_t_get device timestart "$id" "00:00")
-			local end_time=$(config_t_get device timeend "$id" "00:00")
+			local start_time=$(config_t_get device time_from "$id" "00:00")
+			local end_time=$(config_t_get device time_over "$id" "00:00")
 			is_time_in_range "$start_time" "$end_time" || {
 				dbg "时间段外: $target ($start_time-$end_time)"
 				return 1
@@ -249,8 +249,8 @@ check_device_control() {
 			;;
 
 		"combined")
-			local start_time=$(config_t_get device timestart "$id" "00:00")
-			local end_time=$(config_t_get device timeend "$id" "00:00")
+			local start_time=$(config_t_get device time_from "$id" "00:00")
+			local end_time=$(config_t_get device time_over "$id" "00:00")
 			local use_duration=$(config_t_get device use_duration "$id" "0")
 
 			# 时间段检查
@@ -289,8 +289,8 @@ check_device_control() {
 
 		*)
 			# 默认时间段控制
-			local start_time=$(config_t_get device timestart "$id" "00:00")
-			local end_time=$(config_t_get device timeend "$id" "00:00")
+			local start_time=$(config_t_get device time_from "$id" "00:00")
+			local end_time=$(config_t_get device time_over "$id" "00:00")
 			is_time_in_range "$start_time" "$end_time"
 			return $?
 			;;

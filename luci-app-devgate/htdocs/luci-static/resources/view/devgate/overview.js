@@ -541,13 +541,13 @@ return view.extend({
 		o.rmempty = false;
 
 		// 时间段控制字段
-		o = s.option(form.Value, 'timestart', _('开始时间'));
+		o = s.option(form.Value, 'time_from', _('开始时间'));
 		o.placeholder = '00:00';
 		o.default = '00:00';
 		o.depends({ 'time_mode': 'period', '!contains': true });
 		o.depends({ 'time_mode': 'combined', '!contains': true });
 
-		o = s.option(form.Value, 'timeend', _('结束时间'));
+		o = s.option(form.Value, 'time_over', _('结束时间'));
 		o.placeholder = '00:00';
 		o.default = '00:00';
 		o.depends({ 'time_mode': 'period', '!contains': true });
