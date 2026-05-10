@@ -124,9 +124,9 @@ function renderPageHeader(version, initialStatus) {
 				href: 'https://github.com/Antecer/luci-app-devgate',
 				target: '_blank',
 				rel: 'noreferrer noopener'
-			}, 'DevGate_v%s'.format(version || 'unknown'))
-		]),
-		renderServiceSwitch(initialStatus)
+			}, 'DevGate_v%s'.format(version || 'unknown')),
+			renderServiceSwitch(initialStatus)
+		])
 	]);
 }
 
@@ -135,15 +135,6 @@ function renderStylesheet() {
 		rel: 'stylesheet',
 		href: L.resource('view/devgate/custom.css')
 	});
-}
-
-function resizeRulesTable(scroller) {
-	var rect = scroller.getBoundingClientRect();
-	var bottomGap = 24;
-	var minHeight = 240;
-	var height = Math.max(minHeight, window.innerHeight - rect.top - bottomGap);
-
-	scroller.style.height = height + 'px';
 }
 
 function setupRulesLayout(mapEl) {
@@ -176,13 +167,6 @@ function setupRulesLayout(mapEl) {
 		table.parentNode.insertBefore(scroller, table);
 		scroller.appendChild(table);
 	}
-
-	var updateTableHeight = function () {
-		resizeRulesTable(scroller);
-	};
-
-	requestAnimationFrame(updateTableHeight);
-	window.addEventListener('resize', updateTableHeight);
 
 	return mapEl;
 }
