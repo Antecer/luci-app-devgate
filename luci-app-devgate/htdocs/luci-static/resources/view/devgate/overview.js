@@ -9,23 +9,6 @@
 'require request';
 'require network';
 
-function renderServiceStatus(isRunning, pid) {
-	var statusText = isRunning ? _('运行中') : _('未运行');
-	var color = isRunning ? 'green' : 'red';
-	var icon = isRunning ? '✓' : '✗';
-
-	var statusHtml = String.format(
-		'<em><span style="color:%s">%s <strong>%s</strong></span></em>',
-		color, icon, statusText
-	);
-
-	if (isRunning && pid) {
-		statusHtml += ' <small>(进程 ID：' + pid + ')</small>';
-	}
-
-	return statusHtml;
-}
-
 function parseServiceStatus(text) {
 	var status = {
 		running: false,
@@ -58,6 +41,10 @@ function getServiceStatus() {
 		});
 }
 
+function setServiceRunning(running) {
+	return fs.exec_direct('/etc/init.d/devgate', [running ? 'start' : 'stop']);
+}
+
 function getPackageVersion() {
 	return L.resolveDefault(fs.read_direct('/usr/lib/opkg/status'), '')
 		.then(function (status) {
@@ -71,24 +58,133 @@ function getPackageVersion() {
 		});
 }
 
-function renderPageHeader(version) {
-	return E('div', { 'class': 'devgate-page-header' }, [
-		E('h2', {}, 'DevGate_v%s'.format(version || 'unknown'))
+function syncServiceSwitch(input, status) {
+	var running = !!(status && status.running);
+
+	input.checked = running;
+	input.disabled = false;
+	input.setAttribute('aria-checked', running ? 'true' : 'false');
+	input.title = running ? _('点击停止设备门禁') : _('点击启动设备门禁');
+}
+
+function refreshServiceSwitch(input) {
+	return getServiceStatus()
+		.then(function (status) {
+			syncServiceSwitch(input, status);
+		});
+}
+
+function renderServiceSwitch(initialStatus) {
+	var input = E('input', {
+		type: 'checkbox',
+		role: 'switch',
+		'aria-label': _('设备门禁开关')
+	});
+
+	syncServiceSwitch(input, initialStatus);
+
+	input.addEventListener('change', function () {
+		var running = input.checked;
+
+		input.disabled = true;
+		input.setAttribute('aria-checked', running ? 'true' : 'false');
+
+		setServiceRunning(running)
+			.then(function () {
+				return refreshServiceSwitch(input);
+			})
+			.catch(function (err) {
+				input.checked = !running;
+				input.disabled = false;
+				input.setAttribute('aria-checked', input.checked ? 'true' : 'false');
+				ui.addNotification(null, E('p', running ? _('启动失败') : _('停止失败')), 'error');
+				console.error('服务切换失败:', err);
+			});
+	});
+
+	poll.add(function () {
+		if (input.disabled) {
+			return Promise.resolve();
+		}
+
+		return refreshServiceSwitch(input);
+	}, 5);
+	poll.start();
+
+	return E('label', { 'class': 'devgate-service-switch' }, [
+		input,
+		E('span', { 'class': 'devgate-service-slider' })
 	]);
 }
 
-function renderStyle() {
-	return E('style', [`
-		.devgate-page-header {
-			margin: 0 0 1rem 0;
-		}
-		.devgate-page-header h2 {
-			margin: 0;
-			font-size: 1.625rem;
-			font-weight: 600;
-			line-height: 1.25;
-		}
-	`]);
+function renderPageHeader(version, initialStatus) {
+	return E('div', { 'class': 'devgate-page-header' }, [
+		E('h2', {}, [
+			E('a', {
+				href: 'https://github.com/Antecer/luci-app-devgate',
+				target: '_blank',
+				rel: 'noreferrer noopener'
+			}, 'DevGate_v%s'.format(version || 'unknown'))
+		]),
+		renderServiceSwitch(initialStatus)
+	]);
+}
+
+function renderStylesheet() {
+	return E('link', {
+		rel: 'stylesheet',
+		href: L.resource('view/devgate/custom.css')
+	});
+}
+
+function resizeRulesTable(scroller) {
+	var rect = scroller.getBoundingClientRect();
+	var bottomGap = 24;
+	var minHeight = 240;
+	var height = Math.max(minHeight, window.innerHeight - rect.top - bottomGap);
+
+	scroller.style.height = height + 'px';
+}
+
+function setupRulesLayout(mapEl) {
+	var section = mapEl.querySelector('.cbi-section');
+
+	if (!section) {
+		return mapEl;
+	}
+
+	section.classList.add('devgate-rules-section');
+
+	var actions = section.querySelector('.cbi-section-create, .cbi-section-actions');
+
+	if (actions) {
+		actions.classList.add('devgate-rules-actions');
+	}
+
+	var table = section.querySelector('.cbi-section-table');
+
+	if (!table) {
+		return mapEl;
+	}
+
+	var scroller = table.parentNode && table.parentNode.classList.contains('devgate-rules-table-scroll')
+		? table.parentNode
+		: null;
+
+	if (!scroller) {
+		scroller = E('div', { 'class': 'devgate-rules-table-scroll' });
+		table.parentNode.insertBefore(scroller, table);
+		scroller.appendChild(table);
+	}
+
+	var updateTableHeight = function () {
+		resizeRulesTable(scroller);
+	};
+
+	requestAnimationFrame(updateTableHeight);
+	window.addEventListener('resize', updateTableHeight);
+
+	return mapEl;
 }
 
 function normalizeIp(ip) {
@@ -343,45 +439,14 @@ function isProtectedHost(mac, ips, protectedClient) {
 	return false;
 }
 
-var cbiRichListValue = form.ListValue.extend({
-	renderWidget: function (section_id, option_index, cfgvalue) {
-		var choices = this.transformChoices();
-		var widget = new ui.Dropdown((cfgvalue != null) ? cfgvalue : this.default, choices, {
-			id: this.cbid(section_id),
-			sort: this.keylist,
-			optional: true,
-			select_placeholder: this.select_placeholder || this.placeholder,
-			custom_placeholder: this.custom_placeholder || this.placeholder,
-			validate: L.bind(this.validate, this, section_id),
-			disabled: (this.readonly != null) ? this.readonly : this.map.readonly
-		});
-
-		return widget.render();
-	},
-
-	value: function (value, title, description) {
-		if (description) {
-			form.ListValue.prototype.value.call(this, value, E([], [
-				E('span', { 'class': 'hide-open' }, [title]),
-				E('div', { 'class': 'hide-close', 'style': 'min-width:25vw' }, [
-					E('strong', [title]),
-					E('br'),
-					E('span', { 'style': 'white-space:normal' }, description)
-				])
-			]));
-		} else {
-			form.ListValue.prototype.value.call(this, value, title);
-		}
-	}
-});
-
 return view.extend({
 	load: function () {
 		return Promise.all([
 			uci.load('devgate'),
 			network.getHostHints(),
 			getCurrentClient(),
-			getPackageVersion()
+			getPackageVersion(),
+			getServiceStatus()
 		]);
 	},
 
@@ -391,48 +456,8 @@ return view.extend({
 		var hosts = getHostEntries(hostHints);
 		var protectedClient = buildProtectedClient(hostHints, data[2]);
 
-		m = new form.Map('devgate', null,
-			_('按设备限制上网时段或可用时长。') + '<br/>' +
-			_('时段：仅在指定时间内允许上网。') + '<br/>' +
-			_('时长：上线后允许使用指定分钟数。') + '<br/>' +
-			_('组合：限定时段内再限制可用时长。') + '<br/>' +
-			_('问题反馈：') + ' <a href="https://github.com/Antecer/luci-app-devgate" target="_blank">项目主页</a>');
+		m = new form.Map('devgate');
 
-		s = m.section(form.TypedSection);
-		s.anonymous = true;
-		s.render = function () {
-			var statusView = E('p', { id: 'service_status' },
-				'<span class="spinning"> </span> ' + _('正在检查服务状态...'));
-
-			getServiceStatus()
-				.then(function (res) {
-					var status = renderServiceStatus(res.running, res.pid);
-					statusView.innerHTML = status;
-				})
-				.catch(function (err) {
-					statusView.innerHTML = '<span style="color:orange">⚠ ' +
-						_('状态检查失败') + '</span>';
-					console.error('状态检查错误:', err);
-				});
-
-			poll.add(function () {
-				return getServiceStatus()
-					.then(function (res) {
-						var status = renderServiceStatus(res.running, res.pid);
-						statusView.innerHTML = status;
-					})
-					.catch(function (err) {
-						statusView.innerHTML = '<span style="color:orange">⚠ ' +
-							_('状态检查失败') + '</span>';
-						console.error('状态检查错误:', err);
-					});
-			}, 5);
-
-			poll.start();
-			return E('div', { class: 'cbi-section', id: 'status_bar' }, [
-				statusView
-			]);
-		};
 		var s = m.section(form.TableSection, 'device', _('设备规则'));
 		s.addremove = true;
 		s.anonymous = true;
@@ -495,14 +520,14 @@ return view.extend({
 			});
 		}
 
-		o = s.option(cbiRichListValue, 'chain', _('管控强度'));
+		o = s.option(form.ListValue, 'chain', _('管控强度'));
 		o.value('forward', _('禁止访问公共网络'));
 		o.value('input', _('禁止访问全部网络'));
 		o.default = 'forward';
 		o.rmempty = false;
 
 		// 控制方式选择
-		o = s.option(cbiRichListValue, 'time_mode', _('管控方式'));
+		o = s.option(form.ListValue, 'time_mode', _('管控方式'));
 		o.value('period', _('按时段'));
 		o.value('duration', _('按时长'));
 		o.value('combined', _('时段 + 时长'));
@@ -532,7 +557,7 @@ return view.extend({
 		// o.description = _('上线后累计可用分钟数。');
 
 		// 重置周期
-		o = s.option(cbiRichListValue, 'reset_cycle', _('重置周期'));
+		o = s.option(form.ListValue, 'reset_cycle', _('重置周期'));
 		o.value('daily', _('每日重置'));
 		o.value('weekly', _('每周重置'));
 		o.value('monthly', _('每月重置'));
@@ -564,9 +589,11 @@ return view.extend({
 		// o.description = _('规则生效的日期。');
 
 		return m.render().then(function (mapEl) {
-			return E([], [
-				renderStyle(),
-				renderPageHeader(data[3]),
+			setupRulesLayout(mapEl);
+
+			return E('div', { 'class': 'devgate-page' }, [
+				renderStylesheet(),
+				renderPageHeader(data[3], data[4]),
 				mapEl
 			]);
 		});
