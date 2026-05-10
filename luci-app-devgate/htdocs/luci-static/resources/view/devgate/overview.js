@@ -112,7 +112,10 @@ function renderServiceSwitch(initialStatus) {
 	}, 5);
 	poll.start();
 
-	return input;
+	return E('div', { 'class': 'devgate-service-switch' }, [
+		_('启动'),
+		input
+	]);
 }
 
 function renderPageHeader(version, initialStatus) {
@@ -122,7 +125,7 @@ function renderPageHeader(version, initialStatus) {
 				href: 'https://github.com/Antecer/luci-app-devgate',
 				target: '_blank',
 				rel: 'noreferrer noopener'
-			}, 'DevGate_v%s'.format(version || 'unknown')),
+			}, 'DevGate v%s'.format(version || 'unknown')),
 			renderServiceSwitch(initialStatus)
 		])
 	]);
@@ -135,89 +138,45 @@ function renderStylesheet() {
 	});
 }
 
-function getOuterHeight(node) {
-	if (!node) {
-		return 0;
-	}
-
-	var style = window.getComputedStyle(node);
-
-	if (style.display === 'none' || style.visibility === 'hidden') {
-		return 0;
-	}
-
-	var rect = node.getBoundingClientRect();
-
-	return rect.height + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
-}
-
-function updatePageHeight(pageEl) {
-	var viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-	var pageTop = pageEl.getBoundingClientRect().top;
-	var footerHeight = getOuterHeight(document.querySelector('footer, #footer, .footer'));
-	var pageHeight = Math.floor(viewportHeight - pageTop - footerHeight);
-
-	if (pageHeight > 0) {
-		pageEl.style.setProperty('--devgate-page-height', '%dpx'.format(pageHeight));
-	}
-}
-
-function setupPageHeight(pageEl) {
-	var update = function () {
-		window.requestAnimationFrame(function () {
-			updatePageHeight(pageEl);
-		});
-	};
-
-	update();
-	window.addEventListener('resize', update, { passive: true });
-	window.addEventListener('orientationchange', update, { passive: true });
-	window.setTimeout(update, 250);
-}
-
-function setupRulesLayout(mapEl) {
-	var section = mapEl.querySelector('.cbi-section');
-
-	if (!section) {
-		return mapEl;
-	}
-
-	section.classList.add('devgate-rules-section');
-
-	var title = null;
-	var children = section.children;
-
-	for (var i = 0; i < children.length; i++) {
-		if (children[i].tagName === 'H3' || children[i].tagName === 'LEGEND' ||
-			children[i].classList.contains('cbi-section-title')) {
-			title = children[i];
-			break;
-		}
-	}
-
-	if (!title) {
-		title = section.querySelector('h3, legend, .cbi-section-title');
-	}
-
-	if (!title) {
-		title = E('h3', { 'class': 'devgate-rules-title' }, _('设备规则'));
-		section.insertBefore(title, section.firstChild);
-	}
-
-	title.classList.add('devgate-rules-title');
-
+function takeRulesAddButton(section) {
 	var create = section.querySelector('div.cbi-section-create');
 	var addButton = create ? create.querySelector('.cbi-button') : null;
 
-	if (addButton) {
-		title.appendChild(addButton);
+	if (create && create.parentNode) {
 		create.parentNode.removeChild(create);
 	}
 
+	return addButton;
+}
+
+function renderRulesTitle(section) {
+	var oldTitle = section.querySelector('h3, legend, .cbi-section-title');
+	var titleChildren = [
+		_('设备规则')
+	];
+	var addButton = takeRulesAddButton(section);
+
+	if (addButton) {
+		titleChildren.push(addButton);
+	}
+
+	var title = E('h3', { 'class': 'devgate-rules-title' }, titleChildren);
+
+	if (oldTitle && oldTitle.parentNode) {
+		oldTitle.parentNode.insertBefore(title, oldTitle);
+		oldTitle.parentNode.removeChild(oldTitle);
+	} else {
+		section.insertBefore(title, section.firstChild);
+	}
+
+	return title;
+}
+
+function wrapRulesTable(section) {
 	var table = section.querySelector('.cbi-section-table');
 
 	if (!table) {
-		return mapEl;
+		return;
 	}
 
 	var scroller = table.parentNode && table.parentNode.classList.contains('devgate-rules-table-scroll')
@@ -229,6 +188,20 @@ function setupRulesLayout(mapEl) {
 		table.parentNode.insertBefore(scroller, table);
 		scroller.appendChild(table);
 	}
+}
+
+function setupRulesLayout(mapEl) {
+	var section = mapEl.querySelector('.cbi-section');
+
+	if (!section) {
+		return mapEl;
+	}
+
+	section.classList.add('devgate-rules-section');
+
+	renderRulesTitle(section);
+
+	wrapRulesTable(section);
 
 	return mapEl;
 }
@@ -643,7 +616,33 @@ return view.extend({
 				mapEl
 			]);
 
-			setupPageHeight(pageEl);
+			(async () => {
+				function sleep(ms) {
+					return new Promise((resolve) => setTimeout(resolve, ms));
+				}
+				// 计算容器外部元素占用高度
+				var pageOffset = 0;
+				var offsetSelectors = ['.bg-primary', '.mobile-hide', '.cbi-page-actions'];
+				while (!document.querySelector('.cbi-page-actions')) await sleep(100);
+				for (let selector of offsetSelectors) {
+					let node = document.querySelector(selector);
+					if (node) {
+						let style = window.getComputedStyle(node);
+						if (style.display === 'none' || style.visibility === 'hidden') continue;
+						let rect = node.getBoundingClientRect();
+						pageOffset += rect.height + (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+					}
+				}
+				let container = document.querySelector('#maincontent>.container');
+				if (container) {
+					let style = window.getComputedStyle(container);
+					pageOffset += (parseFloat(style.marginTop) || 0) + (parseFloat(style.marginBottom) || 0);
+				}
+				pageOffset = Math.ceil(pageOffset);
+				if (pageOffset > 0) {
+					pageEl.style.setProperty('--devgate-page-offset', '%dpx'.format(pageOffset));
+				}
+			})();
 
 			return pageEl;
 		});
