@@ -1,9 +1,31 @@
 'use strict';
 
-function remote_addr() {
-	let addr = getenv('REMOTE_ADDR') || getenv('HTTP_X_REAL_IP') || '';
+function append_addr(list, http, name) {
+	let value = http.getenv(name) || '';
 
-	return addr + '\n';
+	if (value)
+		push(list, value);
+}
+
+function remote_addr(env) {
+	let http = env && env.http;
+	let addr = '';
+	let values = [];
+
+	if (!http)
+		return '';
+
+	append_addr(values, http, 'HTTP_X_FORWARDED_FOR');
+	append_addr(values, http, 'HTTP_X_REAL_IP');
+	append_addr(values, http, 'HTTP_CF_CONNECTING_IP');
+	append_addr(values, http, 'HTTP_TRUE_CLIENT_IP');
+	append_addr(values, http, 'HTTP_FORWARDED');
+	append_addr(values, http, 'REMOTE_ADDR');
+
+	for (let value in values)
+		addr += value + '\n';
+
+	return addr;
 }
 
 return {

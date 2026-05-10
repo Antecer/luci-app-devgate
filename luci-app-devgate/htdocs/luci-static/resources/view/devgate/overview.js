@@ -7,7 +7,13 @@
 'require poll';
 'require fs';
 'require request';
-'require network';
+'require rpc';
+
+var callHostHints = rpc.declare({
+	object: 'luci-rpc',
+	method: 'getHostHints',
+	expect: { '': {} }
+});
 
 function parseServiceStatus(text) {
 	var status = {
@@ -266,6 +272,34 @@ function getEnvRemoteAddress() {
 	return null;
 }
 
+function addClientIp(ips, value) {
+	var ip = normalizeIp(value);
+
+	if (ip) {
+		ips[ip] = true;
+	}
+}
+
+function parseClientIps(text) {
+	var ips = {};
+
+	String(text || '').split(/[\r\n]+/).forEach(function (line) {
+		line = line.trim();
+
+		if (!line) {
+			return;
+		}
+
+		line.split(',').forEach(function (part) {
+			var forwarded = String(part || '').match(/for="?([^;,"]+)/i);
+
+			addClientIp(ips, forwarded ? forwarded[1] : part);
+		});
+	});
+
+	return ips;
+}
+
 function responseText(res) {
 	if (!res) {
 		return '';
@@ -291,17 +325,46 @@ function responseText(res) {
 }
 
 function parseRemoteAddressResponse(text) {
-	var ip = normalizeIp(text);
-
-	if (ip && /^[0-9a-f:.]+$/.test(ip)) {
-		return ip;
-	}
+	var ips = parseClientIps(text);
 
 	try {
 		var data = JSON.parse(text);
-		return normalizeIp(data && (data.ipaddr || data.ip || data.remote_addr || data.address));
+		['ipaddr', 'ip', 'remote_addr', 'address'].forEach(function (field) {
+			addClientIp(ips, data && data[field]);
+		});
+
+		L.toArray(data && data.ips).forEach(function (ip) {
+			addClientIp(ips, ip);
+		});
 	} catch (e) {
-		return null;
+	}
+
+	return Object.keys(ips);
+}
+
+function normalizeClient(value) {
+	var ips = {};
+
+	L.toArray(value && value.ips).forEach(function (ip) {
+		addClientIp(ips, ip);
+	});
+
+	addClientIp(ips, value && value.ip);
+
+	return {
+		ips: Object.keys(ips)
+	};
+}
+
+function appendCurrentClientIp(client, ip) {
+	if (!ip) {
+		return;
+	}
+
+	client.ips = client.ips || [];
+
+	if (client.ips.indexOf(ip) === -1) {
+		client.ips.push(ip);
 	}
 }
 
@@ -311,10 +374,18 @@ function requestRemoteAddress(path) {
 			if (res && typeof res.json === 'function') {
 				try {
 					var data = res.json();
-					var jsonIp = normalizeIp(data && (data.ipaddr || data.ip || data.remote_addr || data.address));
+					var jsonIps = {};
 
-					if (jsonIp) {
-						return jsonIp;
+					['ipaddr', 'ip', 'remote_addr', 'address'].forEach(function (field) {
+						addClientIp(jsonIps, data && data[field]);
+					});
+
+					L.toArray(data && data.ips).forEach(function (ip) {
+						addClientIp(jsonIps, ip);
+					});
+
+					if (Object.keys(jsonIps).length > 0) {
+						return Object.keys(jsonIps);
 					}
 				} catch (e) { }
 			}
@@ -330,14 +401,19 @@ function requestRemoteAddress(path) {
 
 function getCurrentClient() {
 	var envIp = getEnvRemoteAddress();
+	var client = { ips: [] };
 
 	if (envIp) {
-		return Promise.resolve({ ip: envIp });
+		appendCurrentClientIp(client, envIp);
 	}
 
 	return requestRemoteAddress('admin/services/devgate/remote_addr')
-		.then(function (ip) {
-			return { ip: ip || null };
+		.then(function (ips) {
+			L.toArray(ips).forEach(function (ip) {
+				appendCurrentClientIp(client, ip);
+			});
+
+			return normalizeClient(client);
 		});
 }
 
@@ -349,9 +425,13 @@ function getHostEntries(hostHints) {
 	return hostHints.hosts || hostHints;
 }
 
+function getHostHints() {
+	return L.resolveDefault(callHostHints(), {});
+}
+
 function normalizeHostIp(value) {
 	if (value && typeof value === 'object') {
-		value = value.address || value.ipaddr || value.ip || value[0];
+		value = value.address || value.ipaddr || value.ip || value.addr || value[0];
 	}
 
 	return normalizeIp(value);
@@ -360,7 +440,7 @@ function normalizeHostIp(value) {
 function getHostIps(host) {
 	var seen = {};
 	var ips = [];
-	var fields = ['ipaddrs', 'ipv4', 'ip6addrs', 'ipv6'];
+	var fields = ['ipaddrs', 'ipaddr', 'ipv4', 'ipv4-address', 'ip6addrs', 'ip6addr', 'ipv6', 'ipv6-address'];
 
 	fields.forEach(function (field) {
 		L.toArray(host && host[field]).forEach(function (value) {
@@ -396,11 +476,13 @@ function buildProtectedClient(hostHints, currentClient) {
 	};
 	var hosts = getHostEntries(hostHints);
 
-	if (currentClient && currentClient.ip) {
-		protectedClient.ips[currentClient.ip] = true;
+	L.toArray(currentClient && currentClient.ips).forEach(function (ip) {
+		protectedClient.ips[ip] = true;
+	});
 
-		if (hostHints && typeof hostHints.getMACAddrByIPAddr === 'function') {
-			var matchedMac = normalizeMac(hostHints.getMACAddrByIPAddr(currentClient.ip));
+	if (hostHints && typeof hostHints.getMACAddrByIPAddr === 'function') {
+		L.toArray(currentClient && currentClient.ips).forEach(function (ip) {
+			var matchedMac = normalizeMac(hostHints.getMACAddrByIPAddr(ip));
 
 			if (matchedMac) {
 				if (hosts[matchedMac]) {
@@ -409,7 +491,7 @@ function buildProtectedClient(hostHints, currentClient) {
 					protectedClient.macs[matchedMac] = true;
 				}
 			}
-		}
+		});
 	}
 
 	Object.keys(hosts).forEach(function (mac) {
@@ -459,7 +541,7 @@ return view.extend({
 	load: function () {
 		return Promise.all([
 			uci.load('devgate'),
-			network.getHostHints(),
+			getHostHints(),
 			getCurrentClient(),
 			getPackageVersion(),
 			getServiceStatus()
