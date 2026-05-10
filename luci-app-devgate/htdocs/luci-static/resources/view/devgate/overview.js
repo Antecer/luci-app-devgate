@@ -78,6 +78,7 @@ function renderServiceSwitch(initialStatus) {
 	var input = E('input', {
 		type: 'checkbox',
 		role: 'switch',
+		'class': 'cbi-input-checkbox',
 		'aria-label': _('设备门禁开关')
 	});
 
@@ -111,10 +112,7 @@ function renderServiceSwitch(initialStatus) {
 	}, 5);
 	poll.start();
 
-	return E('label', { 'class': 'devgate-service-switch' }, [
-		input,
-		E('span', { 'class': 'devgate-service-slider' })
-	]);
+	return input;
 }
 
 function renderPageHeader(version, initialStatus) {
@@ -150,21 +148,30 @@ function setupRulesLayout(mapEl) {
 	var children = section.children;
 
 	for (var i = 0; i < children.length; i++) {
-		if (children[i].tagName === 'H3' || children[i].classList.contains('cbi-section-title')) {
+		if (children[i].tagName === 'H3' || children[i].tagName === 'LEGEND' ||
+			children[i].classList.contains('cbi-section-title')) {
 			title = children[i];
 			break;
 		}
 	}
 
-	var actions = section.querySelector('.cbi-section-create, .cbi-section-actions');
+	if (!title) {
+		title = section.querySelector('h3, legend, .cbi-section-title');
+	}
 
-	if (actions) {
-		actions.classList.add('devgate-rules-actions');
+	if (!title) {
+		title = E('h3', { 'class': 'devgate-rules-title' }, _('设备规则'));
+		section.insertBefore(title, section.firstChild);
+	}
 
-		if (title) {
-			title.classList.add('devgate-rules-title');
-			title.appendChild(actions);
-		}
+	title.classList.add('devgate-rules-title');
+
+	var create = section.querySelector('div.cbi-section-create');
+	var addButton = create ? create.querySelector('.cbi-button') : null;
+
+	if (addButton) {
+		title.appendChild(addButton);
+		create.parentNode.removeChild(create);
 	}
 
 	var table = section.querySelector('.cbi-section-table');
