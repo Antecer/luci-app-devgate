@@ -44,7 +44,9 @@ jobs:
           if [ -n "$missing" ]; then
             echo "Installing missing build dependencies:$missing"
             sudo apt-get update -qq
-            sudo apt-get install -y -qq --no-install-recommends $missing
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+              -o=Dpkg::Use-Pty=0 \
+              --no-install-recommends $missing
           else
             echo "All build dependencies are already installed."
           fi
