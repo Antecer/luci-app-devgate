@@ -564,10 +564,9 @@ function getHostIpv4s(host) {
 function formatHostOption(mac, host, ipv4s) {
 	var normalizedMac = normalizeMac(mac) || String(mac || '').trim();
 	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('未知IP');
-	var name = String(host && host.name || '').trim();
-	var text = '%s (%s)'.format(normalizedMac.toUpperCase(), ipText);
+	var name = String(host && host.name || '').trim() || _('未知设备');
 
-	return name ? '%s %s'.format(text, name) : text;
+	return '%s\n%s\n%s'.format(name, normalizedMac.toUpperCase(), ipText);
 }
 
 function protectHost(protectedClient, mac, host) {
