@@ -9,6 +9,7 @@ LUCI_TITLE:=LuCI 设备门禁插件
 LUCI_DESCRIPTION:=基于 nftables 的设备门禁插件。
 LUCI_DEPENDS:=+bc +nftables +bash +conntrack
 LUCI_PKGARCH:=all
+LUCI_MINIFY_CSS:=0
 
 PKG_VERSION:=3.2.4
 PKG_RELEASE:=20260509
