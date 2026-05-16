@@ -2,6 +2,9 @@
 	"luci-app-devgate": {
 		"description": "授予 luci-app-devgate 设备门禁权限",
 		"read": {
+			"ubus": {
+				"session": [ "access", "login" ]
+			},
 			"cgi-io": [
 				"exec"
 			],
@@ -16,6 +19,9 @@
 					"exec"
 				],
 				"/usr/lib/opkg/status": [
+					"read"
+				],
+				"/lib/apk/db/installed": [
 					"read"
 				]
 			},

@@ -1,18 +1,18 @@
 include $(TOPDIR)/rules.mk
 
-THEME_NAME:=devgate
 PKG_NAME:=luci-app-devgate
 
 PKG_LICENSE:=Apache-2.0
 
-LUCI_TITLE:=LuCI 设备门禁插件
-LUCI_DESCRIPTION:=基于 nftables 的设备门禁插件。
+LUCI_TITLE:=LuCI App for DevGate - Device Access Control
+LUCI_DESCRIPTION:=Device access control plugin based on nftables.
 LUCI_DEPENDS:=+nftables +bash
 LUCI_PKGARCH:=all
 LUCI_MINIFY_CSS:=0
 
 PKG_VERSION:=3.2.4
 PKG_RELEASE:=20260509
+
 define Build/Compile
 endef
 
@@ -22,6 +22,7 @@ define Package/$(PKG_NAME)/postinst
 	/etc/init.d/rpcd reload >/dev/null 2>&1 || true
 	rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-*cache
 }
+exit 0
 endef
 
 define Package/$(PKG_NAME)/prerm
@@ -50,4 +51,3 @@ endef
 include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature
-

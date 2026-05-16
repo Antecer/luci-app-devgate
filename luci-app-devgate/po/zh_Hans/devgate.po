@@ -1,0 +1,140 @@
+# DevGate LuCI App - Simplified Chinese Translation
+# Copyright (C) 2026 Antecer
+# SPDX-License-Identifier: Apache-2.0
+#
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "LuCI App for DevGate - Device Access Control"
+msgstr "设备门禁"
+
+msgid "Device access control plugin based on nftables."
+msgstr "基于 nftables 的设备门禁插件。"
+
+msgid "Click to stop DevGate"
+msgstr "点击停止设备门禁"
+
+msgid "Click to start DevGate"
+msgstr "点击启动设备门禁"
+
+msgid "DevGate service switch"
+msgstr "设备门禁开关"
+
+msgid "Start"
+msgstr "启动"
+
+msgid "Failed to start"
+msgstr "启动失败"
+
+msgid "Failed to stop"
+msgstr "停止失败"
+
+msgid "Device Rules"
+msgstr "设备规则"
+
+msgid "Comment"
+msgstr "备注"
+
+msgid "Optional comment"
+msgstr "可选备注"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Target device"
+msgstr "目标设备"
+
+msgid "Cannot select the currently logged-in device."
+msgstr "不能选择当前登录设备。"
+
+msgid "Please select or enter the device MAC address."
+msgstr "请选择或输入设备MAC。"
+
+msgid "Unknown IP"
+msgstr "未知IP"
+
+msgid "Unknown device"
+msgstr "未知设备"
+
+msgid "Control level"
+msgstr "管控强度"
+
+msgid "Block public network access"
+msgstr "禁止访问公共网络"
+
+msgid "Block all network access"
+msgstr "禁止访问全部网络"
+
+msgid "Control mode"
+msgstr "管控方式"
+
+msgid "By time period"
+msgstr "按时段"
+
+msgid "By duration"
+msgstr "按时长"
+
+msgid "Period + duration"
+msgstr "时段 + 时长"
+
+msgid "Start time"
+msgstr "开始时间"
+
+msgid "End time"
+msgstr "结束时间"
+
+msgid "Available duration (minutes)"
+msgstr "可用时长（分钟）"
+
+msgid "Reset cycle"
+msgstr "重置周期"
+
+msgid "Reset daily"
+msgstr "每日重置"
+
+msgid "Reset weekly"
+msgstr "每周重置"
+
+msgid "Reset monthly"
+msgstr "每月重置"
+
+msgid "Never reset"
+msgstr "不重置"
+
+msgid "Also limit duration"
+msgstr "叠加时长限制"
+
+msgid "Effective days"
+msgstr "生效日期"
+
+msgid "Every day"
+msgstr "每天"
+
+msgid "Monday"
+msgstr "周一"
+
+msgid "Tuesday"
+msgstr "周二"
+
+msgid "Wednesday"
+msgstr "周三"
+
+msgid "Thursday"
+msgstr "周四"
+
+msgid "Friday"
+msgstr "周五"
+
+msgid "Saturday"
+msgstr "周六"
+
+msgid "Sunday"
+msgstr "周日"
+
+msgid "Weekdays"
+msgstr "工作日"
+
+msgid "Weekends"
+msgstr "休息日"
