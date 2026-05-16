@@ -57,7 +57,20 @@ function getPackageVersion() {
 			var block = String(status || '').match(/(^|\n)Package:\s*luci-app-devgate\n([\s\S]*?)(\n\n|$)/);
 			var version = block ? block[2].match(/(^|\n)Version:\s*([^\s]+)/) : null;
 
-			return version ? version[2] : 'unknown';
+			if (version) {
+				return version[2];
+			}
+
+			return L.resolveDefault(fs.read_direct('/lib/apk/db/installed'), '')
+				.then(function (apkdb) {
+					var block2 = String(apkdb || '').match(/(^|\n)P:luci-app-devgate\n([\s\S]*?)(\n\n|$)/);
+					var ver2 = block2 ? block2[2].match(/(^|\n)V:([^\n]+)/) : null;
+
+					return ver2 ? ver2[2].trim() : 'unknown';
+				})
+				.catch(function () {
+					return 'unknown';
+				});
 		})
 		.catch(function () {
 			return 'unknown';
@@ -70,7 +83,7 @@ function syncServiceSwitch(input, status) {
 	input.checked = running;
 	input.disabled = false;
 	input.setAttribute('aria-checked', running ? 'true' : 'false');
-	input.title = running ? _('点击停止设备门禁') : _('点击启动设备门禁');
+	input.title = running ? _('Click to stop DevGate') : _('Click to start DevGate');
 }
 
 function refreshServiceSwitch(input) {
@@ -85,7 +98,7 @@ function renderServiceSwitch(initialStatus) {
 		type: 'checkbox',
 		role: 'switch',
 		'class': 'cbi-input-checkbox',
-		'aria-label': _('设备门禁开关')
+		'aria-label': _('DevGate service switch')
 	});
 
 	syncServiceSwitch(input, initialStatus);
@@ -104,7 +117,7 @@ function renderServiceSwitch(initialStatus) {
 				input.checked = !running;
 				input.disabled = false;
 				input.setAttribute('aria-checked', input.checked ? 'true' : 'false');
-				ui.addNotification(null, E('p', running ? _('启动失败') : _('停止失败')), 'error');
+				ui.addNotification(null, E('p', running ? _('Failed to start') : _('Failed to stop')), 'error');
 				console.error('服务切换失败:', err);
 			});
 	});
@@ -119,7 +132,7 @@ function renderServiceSwitch(initialStatus) {
 	poll.start();
 
 	return E('div', { 'class': 'devgate-service-switch' }, [
-		_('启动'),
+		_('Start'),
 		input
 	]);
 }
@@ -158,7 +171,7 @@ function takeRulesAddButton(section) {
 function renderRulesTitle(section) {
 	var oldTitle = section.querySelector('h3, legend, .cbi-section-title');
 	var titleChildren = [
-		_('设备规则')
+		_('Device Rules')
 	];
 	var addButton = takeRulesAddButton(section);
 
@@ -563,8 +576,8 @@ function getHostIpv4s(host) {
 
 function formatHostOption(mac, host, ipv4s) {
 	var normalizedMac = normalizeMac(mac) || String(mac || '').trim();
-	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('未知IP');
-	var name = String(host && host.name || '').trim() || _('未知设备');
+	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('Unknown IP');
+	var name = String(host && host.name || '').trim() || _('Unknown device');
 
 	return E('span', { 'class': 'devgate-host-option' }, [
 		name,
@@ -577,8 +590,8 @@ function formatHostOption(mac, host, ipv4s) {
 
 function formatHostSortText(mac, host, ipv4s) {
 	var normalizedMac = normalizeMac(mac) || String(mac || '').trim();
-	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('未知IP');
-	var name = String(host && host.name || '').trim() || _('未知设备');
+	var ipText = ipv4s.length > 0 ? ipv4s.join(', ') : _('Unknown IP');
+	var name = String(host && host.name || '').trim() || _('Unknown device');
 
 	return '%s %s %s'.format(name, normalizedMac.toUpperCase(), ipText);
 }
@@ -685,29 +698,29 @@ return view.extend({
 
 		m = new form.Map('devgate');
 
-		var s = m.section(form.TableSection, 'device', _('设备规则'));
+		var s = m.section(form.TableSection, 'device', _('Device Rules'));
 		s.addremove = true;
 		s.anonymous = true;
 		s.sortable = false;
 
-		o = s.option(form.Value, 'comment', _('备注'));
+		o = s.option(form.Value, 'comment', _('Comment'));
 		o.optional = true;
-		o.placeholder = _('可选备注');
+		o.placeholder = _('Optional comment');
 
-		o = s.option(form.Flag, 'enable', _('启用'));
+		o = s.option(form.Flag, 'enable', _('Enable'));
 		o.rmempty = false;
 		o.default = '1';
 
-		o = s.option(form.Value, 'mac', _('目标设备'));
+		o = s.option(form.Value, 'mac', _('Target device'));
 		o.rmempty = false;
 		// o.description = _('以MAC识别设备，IP仅用于辅助辨认。');
 		o.validate = function (section_id, value) {
 			if (isProtectedTarget(value, protectedClient)) {
-				return _('不能选择当前登录设备。');
+				return _('Cannot select the currently logged-in device.');
 			}
 
 			if (!normalizeMac(value)) {
-				return _('请选择或输入设备MAC。');
+				return _('Please select or enter the device MAC address.');
 			}
 
 			return true;
@@ -740,35 +753,35 @@ return view.extend({
 			});
 		}
 
-		o = s.option(form.ListValue, 'chain', _('管控强度'));
-		o.value('forward', _('禁止访问公共网络'));
-		o.value('input', _('禁止访问全部网络'));
+		o = s.option(form.ListValue, 'chain', _('Control level'));
+		o.value('forward', _('Block public network access'));
+		o.value('input', _('Block all network access'));
 		o.default = 'forward';
 		o.rmempty = false;
 
 		// 控制方式选择
-		o = s.option(form.ListValue, 'time_mode', _('管控方式'));
-		o.value('period', _('按时段'));
-		o.value('duration', _('按时长'));
-		o.value('combined', _('时段 + 时长'));
+		o = s.option(form.ListValue, 'time_mode', _('Control mode'));
+		o.value('period', _('By time period'));
+		o.value('duration', _('By duration'));
+		o.value('combined', _('Period + duration'));
 		o.default = 'period';
 		o.rmempty = false;
 
 		// 时间段控制字段
-		o = s.option(form.Value, 'time_from', _('开始时间'));
+		o = s.option(form.Value, 'time_from', _('Start time'));
 		o.placeholder = '00:00';
 		o.default = '00:00';
 		o.depends({ 'time_mode': 'period', '!contains': true });
 		o.depends({ 'time_mode': 'combined', '!contains': true });
 
-		o = s.option(form.Value, 'time_over', _('结束时间'));
+		o = s.option(form.Value, 'time_over', _('End time'));
 		o.placeholder = '00:00';
 		o.default = '00:00';
 		o.depends({ 'time_mode': 'period', '!contains': true });
 		o.depends({ 'time_mode': 'combined', '!contains': true });
 
 		// 可用时长字段
-		o = s.option(form.Value, 'duration', _('可用时长（分钟）'));
+		o = s.option(form.Value, 'duration', _('Available duration (minutes)'));
 		o.placeholder = '60';
 		o.default = '60';
 		o.datatype = 'min(1)';
@@ -777,33 +790,33 @@ return view.extend({
 		// o.description = _('上线后累计可用分钟数。');
 
 		// 重置周期
-		o = s.option(form.ListValue, 'reset_cycle', _('重置周期'));
-		o.value('daily', _('每日重置'));
-		o.value('weekly', _('每周重置'));
-		o.value('monthly', _('每月重置'));
-		o.value('never', _('不重置'));
+		o = s.option(form.ListValue, 'reset_cycle', _('Reset cycle'));
+		o.value('daily', _('Reset daily'));
+		o.value('weekly', _('Reset weekly'));
+		o.value('monthly', _('Reset monthly'));
+		o.value('never', _('Never reset'));
 		o.default = 'daily';
 		o.depends({ 'time_mode': 'duration', '!contains': true });
 		o.depends({ 'time_mode': 'combined', '!contains': true });
 		// o.description = _('清零已用时长的周期。');
 
 		// 组合控制：是否在时间段内启用时长限制
-		o = s.option(form.Flag, 'use_duration', _('叠加时长限制'));
+		o = s.option(form.Flag, 'use_duration', _('Also limit duration'));
 		o.default = '0';
 		o.depends({ 'time_mode': 'combined', '!contains': true });
 		// o.description = _('在允许时段内继续限制可用时长。');
 
-		o = s.option(form.Value, 'week', _('生效日期'));
-		o.value('0', _('每天'));
-		o.value('1', _('周一'));
-		o.value('2', _('周二'));
-		o.value('3', _('周三'));
-		o.value('4', _('周四'));
-		o.value('5', _('周五'));
-		o.value('6', _('周六'));
-		o.value('7', _('周日'));
-		o.value('1,2,3,4,5', _('工作日'));
-		o.value('6,7', _('休息日'));
+		o = s.option(form.Value, 'week', _('Effective days'));
+		o.value('0', _('Every day'));
+		o.value('1', _('Monday'));
+		o.value('2', _('Tuesday'));
+		o.value('3', _('Wednesday'));
+		o.value('4', _('Thursday'));
+		o.value('5', _('Friday'));
+		o.value('6', _('Saturday'));
+		o.value('7', _('Sunday'));
+		o.value('1,2,3,4,5', _('Weekdays'));
+		o.value('6,7', _('Weekends'));
 		o.default = '0';
 		o.rmempty = false;
 		// o.description = _('规则生效的日期。');
