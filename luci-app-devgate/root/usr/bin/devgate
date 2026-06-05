@@ -197,7 +197,7 @@ verify_firewall_rule() {
 	forward_section=$(rule_section "$id" forward)
 	input_section=$(rule_section "$id" input)
 
-	dbg "验证firewall通行规则: ID=$id MAC=$mac chain=$device_chain"
+	dbg "验证firewall通信规则: ID=$id MAC=$mac chain=$device_chain"
 
 	[ "$(uci -q get "firewall.$forward_section.src_mac")" = "$mac" ] || {
 		dbg "验证失败: 转发规则不存在或MAC不匹配"
@@ -216,17 +216,17 @@ verify_firewall_rule() {
 		}
 	fi
 
-	dbg "验证成功: DevGate通行规则已写入firewall配置"
+	dbg "验证成功: DevGate通信规则已写入firewall配置"
 	return 0
 }
 
 init_firewall() {
 	check_firewall_tool || return 1
 
-	info "初始化防火墙规则 (黑名单模式，REJECT目标，规则同步到firewall通行规则)"
+	info "初始化防火墙规则 (黑名单模式，REJECT目标，规则同步到firewall通信规则)"
 	delete_all_devgate_firewall_rules
 	commit_firewall || return 1
-	info "firewall通行规则初始化完成"
+	info "firewall通信规则初始化完成"
 
 	return 0
 }
@@ -239,7 +239,7 @@ stop_firewall() {
 	commit_firewall || return 1
 
 	rm -f "$IDLIST"
-	info "DevGate通行规则已删除"
+	info "DevGate通信规则已删除"
 }
 
 add_device() {
@@ -261,7 +261,7 @@ add_device() {
 		return 1
 	}
 
-	info "添加设备到firewall通行规则: $comment ($mac, $device_chain)"
+	info "添加设备到firewall通信规则: $comment ($mac, $device_chain)"
 
 	delete_device_firewall_rules "$id"
 	create_forward_rule "$(rule_section "$id" forward)" "$mac" "$(rule_name "$comment" forward)" || return 1
@@ -286,7 +286,7 @@ del_device() {
 	local target=$(config_t_get device mac "$id")
 	local comment=$(config_t_get device comment "$id" "设备$id")
 
-	info "从firewall通行规则移除设备: $comment ($target)"
+	info "从firewall通信规则移除设备: $comment ($target)"
 
 	delete_device_firewall_rules "$id"
 	commit_firewall || return 1
@@ -299,14 +299,14 @@ show_firewall_status() {
 	echo "防火墙状态:"
 	echo "控制方式: 黑名单"
 	echo "控制强度: 按设备规则"
-	echo "规则来源: /etc/config/firewall 通行规则"
+	echo "规则来源: /etc/config/firewall 通信规则"
 	echo ""
 
-	echo "DevGate通行规则:"
+	echo "DevGate通信规则:"
 	if uci -q show firewall | grep -q "^firewall\.${RULE_PREFIX}"; then
 		uci -q show firewall | grep "^firewall\.${RULE_PREFIX}"
 	else
-		echo "  当前没有DevGate通行规则"
+		echo "  当前没有DevGate通信规则"
 	fi
 }
 
@@ -426,8 +426,8 @@ case "$crrun" in
 		echo "用法: $0 {start|stop|add <id>|del <id>|status|diagnose|help}"
 		echo ""
 		echo "命令说明:"
-		echo "  start           - 初始化firewall通行规则"
-		echo "  stop            - 停止并清理所有DevGate通行规则"
+		echo "  start           - 初始化firewall通信规则"
+		echo "  stop            - 停止并清理所有DevGate通信规则"
 		echo "  add <id>        - 添加设备到控制列表"
 		echo "  del <id>        - 从控制列表移除设备"
 		echo "  status          - 显示防火墙状态"
