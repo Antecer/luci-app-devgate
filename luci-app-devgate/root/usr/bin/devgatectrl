@@ -29,6 +29,18 @@ config_t_get() {
 	echo "${ret:=${4}}"
 }
 
+normalize_mac() {
+	local mac
+	mac=$(echo "${1:-}" | xargs | tr 'A-F' 'a-f')
+
+	if echo "$mac" | grep -qE '^([0-9a-f]{2}:){5}[0-9a-f]{2}$'; then
+		echo "$mac"
+		return 0
+	fi
+
+	return 1
+}
+
 # 获取启用设备
 get_enabled_devices() {
 	uci show "$NAME" 2>/dev/null | sed -n "s/^${NAME}\.@device\[\([0-9][0-9]*\)\]\.enable='1'.*/\1/p" | sort -n
@@ -103,11 +115,22 @@ disable_device_rule() {
 	local target=$(config_t_get device mac "$id")
 	local comment=$(config_t_get device comment "$id" "设备$id")
 
-	info "防火墙规则缺失，停用DevGate规则: $comment ($target, uid=$uid)"
+	info "停用DevGate规则: $comment ($target, uid=$uid)"
 	uci -q set "${NAME}.@device[$id].enable=0" || return 1
 	uci -q commit "$NAME" || return 1
 	forget_managed_uid "$uid"
 	return 0
+}
+
+disable_device_without_mac() {
+	local id="$1"
+	local uid="$2"
+	local target=$(config_t_get device mac "$id")
+	local comment=$(config_t_get device comment "$id" "设备$id")
+
+	info "目标设备为空或无效，强制未启用: $comment ($target, uid=$uid)"
+	run_devgate_change del "$uid"
+	disable_device_rule "$id" "$uid"
 }
 
 is_enabled_uid() {
@@ -200,13 +223,21 @@ sync_device_status() {
 	local uid
 	local target=$(config_t_get device mac "$id")
 	local comment=$(config_t_get device comment "$id" "设备$id")
+	local mac
 	local should_block=0
 	local firewall_exists=0
 	local firewall_enabled
 
 	uid="$(get_device_uid "$id")" || {
-		info "规则唯一识别码生成失败: 设备$id"
+		info "规则唯一识别码缺失，停用DevGate规则: 设备$id"
+		uci -q set "${NAME}.@device[$id].enable=0" || return 1
+		uci -q commit "$NAME" || return 1
 		return 1
+	}
+
+	mac="$(normalize_mac "$target")" || {
+		disable_device_without_mac "$id" "$uid"
+		return 0
 	}
 
 	if firewall_rule_exists "$uid"; then
@@ -220,7 +251,7 @@ sync_device_status() {
 		should_block=1
 	fi
 
-	dbg "设备状态: $target, uid=$uid, 防火墙规则存在=$firewall_exists, 应阻止=$should_block"
+	dbg "设备状态: $mac, uid=$uid, 防火墙规则存在=$firewall_exists, 应阻止=$should_block"
 
 	if [ "$firewall_exists" -eq 0 ]; then
 		dbg "创建托管防火墙规则: $target enabled=$should_block"

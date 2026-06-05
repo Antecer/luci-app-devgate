@@ -33,50 +33,12 @@ normalize_rule_uid() {
 	return 1
 }
 
-rule_uid_owner() {
-	local uid="$1"
-
-	uci -q show "$NAME" | sed -n "s/^${NAME}\.@device\[\([0-9][0-9]*\)\]\.uid='$uid'$/\1/p" | head -n 1
-}
-
-rule_uid_in_use() {
-	local uid="$1"
-	local owner
-
-	owner="$(rule_uid_owner "$uid")"
-	[ -n "$owner" ]
-}
-
-generate_rule_uid() {
-	local uid seed
-
-	for _ in 1 2 3 4 5 6 7 8 9 10; do
-		uid="$(hexdump -n 3 -e '3/1 "%02x"' /dev/urandom 2>/dev/null)"
-		uid="$(normalize_rule_uid "$uid")" || uid=""
-
-		if [ -n "$uid" ] && ! rule_uid_in_use "$uid"; then
-			echo "$uid"
-			return 0
-		fi
-	done
-
-	seed="$(($(date +%s 2>/dev/null) + $$))"
-	uid="$(printf '%06x' "$((seed % 16777216))" 2>/dev/null)"
-	normalize_rule_uid "$uid"
-}
-
-ensure_rule_uid() {
+get_rule_uid() {
 	local id="$1"
-	local uid owner
+	local uid
 
 	uid="$(normalize_rule_uid "$(config_t_get device uid "$id")")" || uid=""
-	owner="$(rule_uid_owner "$uid")"
-
-	if [ -z "$uid" ] || { [ -n "$owner" ] && [ "$owner" != "$id" ]; }; then
-		uid="$(generate_rule_uid "$id")" || return 1
-		uci -q set "${NAME}.@device[$id].uid=$uid" || return 1
-		uci -q commit "$NAME" || return 1
-	fi
+	[ -n "$uid" ] || return 1
 
 	echo "$uid"
 }
@@ -86,7 +48,7 @@ resolve_rule_ref() {
 	local uid
 
 	if echo "$ref" | grep -qE '^[0-9]+$' && uci -q show "${NAME}.@device[$ref]" >/dev/null 2>&1; then
-		ensure_rule_uid "$ref"
+		get_rule_uid "$ref"
 		return $?
 	fi
 
@@ -354,6 +316,25 @@ stop_firewall() {
 	info "DevGate通信规则已删除"
 }
 
+disable_device_config() {
+	local id="$1"
+
+	uci -q set "${NAME}.@device[$id].enable=0" || return 1
+	uci -q commit "$NAME" || return 1
+}
+
+skip_device_without_mac() {
+	local id="$1"
+	local reason="$2"
+	local uid
+
+	info "$reason，固定为未启用: ID=$id"
+	uid="$(get_rule_uid "$id" 2>/dev/null)" || uid=""
+	[ -n "$uid" ] && delete_device_firewall_rules "$uid"
+	disable_device_config "$id" || return 1
+	commit_firewall || return 1
+}
+
 add_device() {
 	check_firewall_tool || return 1
 
@@ -364,21 +345,21 @@ add_device() {
 	local device_mode=$(get_device_mode "$id")
 	local dest_zone
 	[ -z "$target" ] && {
-		dbg "添加设备失败: ID $id 的目标地址为空"
-		return 1
+		skip_device_without_mac "$id" "目标设备为空" || return 1
+		return 0
 	}
 
 	local comment=$(config_t_get device comment "$id" "设备$id")
 	local mac
 
 	mac=$(normalize_mac "$target") || {
-		info "添加失败: 目标MAC无效 $target"
-		return 1
+		skip_device_without_mac "$id" "目标MAC无效: $target" || return 1
+		return 0
 	}
 	rule_enabled="$(normalize_enabled "$2")"
 	dest_zone=$(get_forward_dest_zone "$device_mode")
-	uid="$(ensure_rule_uid "$id")" || {
-		info "添加失败: 无法生成规则唯一识别码 ID=$id"
+	uid="$(get_rule_uid "$id")" || {
+		info "添加失败: 规则唯一识别码缺失 ID=$id"
 		return 1
 	}
 
@@ -536,7 +517,7 @@ case "$crrun" in
 			echo "错误: 需要指定设备ID"
 			exit 1
 		}
-		ensure_rule_uid "$crid" || exit 1
+		get_rule_uid "$crid" || exit 1
 		;;
 
 	del)

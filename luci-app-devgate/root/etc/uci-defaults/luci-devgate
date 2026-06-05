@@ -7,7 +7,7 @@ uci -q batch <<-EOF >/dev/null
 	commit ucitrack
 EOF
 
-[ -s /etc/config/devgate ] || cat > /etc/config/devgate <<'EOF'
+[ -e /etc/config/devgate ] || cat > /etc/config/devgate <<'EOF'
 config device
 	option enable '0'
 	option mac ''

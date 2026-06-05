@@ -1246,7 +1246,7 @@ return view.extend({
 				return _('不能选择当前登录设备。');
 			}
 
-			if (!extractMac(value)) {
+			if (String(value || '').trim() !== '' && !extractMac(value)) {
 				return _('请选择或输入设备MAC。');
 			}
 
