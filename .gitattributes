@@ -2,6 +2,8 @@
 *.md text eol=lf
 *.uc linguist-language=JavaScript
 *.sh text eol=lf
+*.css text eol=lf
+*.js text eol=lf
 Makefile text eol=lf
 luci-app-devgate/Makefile text eol=lf
 luci-app-devgate/root/etc/init.d/* text eol=lf
