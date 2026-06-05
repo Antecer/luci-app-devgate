@@ -6,6 +6,7 @@
 *.js text eol=lf
 Makefile text eol=lf
 luci-app-devgate/Makefile text eol=lf
+luci-app-devgate/root/etc/config/* text eol=lf
 luci-app-devgate/root/etc/init.d/* text eol=lf
 luci-app-devgate/root/etc/uci-defaults/* text eol=lf
 luci-app-devgate/root/usr/bin/* text eol=lf
