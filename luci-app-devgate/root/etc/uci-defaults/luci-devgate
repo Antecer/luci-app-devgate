@@ -15,6 +15,7 @@ config device
 	option week '0'
 	option chain 'forward'
 EOF
+rm -f /etc/config/devgate-opkg
 
 /etc/init.d/devgate enable >/dev/null 2>&1 || true
 /etc/init.d/devgate start >/dev/null 2>&1 || true

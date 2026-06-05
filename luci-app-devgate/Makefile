@@ -45,10 +45,6 @@ define Package/$(PKG_NAME)/postrm
 exit 0
 endef
 
-define Package/$(PKG_NAME)/conffiles
-/etc/config/devgate
-endef
-
 include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature
