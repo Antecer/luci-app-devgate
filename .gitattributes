@@ -1,1 +1,9 @@
+.gitattributes text eol=lf
+*.md text eol=lf
 *.uc linguist-language=JavaScript
+*.sh text eol=lf
+Makefile text eol=lf
+luci-app-devgate/Makefile text eol=lf
+luci-app-devgate/root/etc/init.d/* text eol=lf
+luci-app-devgate/root/etc/uci-defaults/* text eol=lf
+luci-app-devgate/root/usr/bin/* text eol=lf

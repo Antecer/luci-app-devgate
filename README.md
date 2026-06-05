@@ -2,7 +2,7 @@
 
 ## 适用环境
 
-适用于 OpenWrt 24.10 / iStoreOS 24.10 等基于 LuCI 和 firewall4/nftables 的环境。
+适用于 OpenWrt 24.10 / iStoreOS 24.10 等基于 LuCI 和 firewall4 的环境。
 
 当前仓库的 GitHub Actions 默认使用 OpenWrt 24.10.6 x86/64 SDK 编译。
 
@@ -15,6 +15,7 @@
 - 按时间段控制设备上网。
 - 按累计可用时长控制设备上网。
 - 为不同设备设置不同管控强度。
+- 当前生效的阻止规则会同步写入 `/etc/config/firewall` 的通行规则，LuCI 的“防火墙 - 通行规则”页面可见，规则名以 `DevGate -` 开头。
 
 插件安全策略：
 
