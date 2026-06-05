@@ -20,6 +20,8 @@ define Package/$(PKG_NAME)/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
 	/etc/init.d/rpcd reload >/dev/null 2>&1 || true
+	/etc/init.d/devgate enable >/dev/null 2>&1 || true
+	/etc/init.d/devgate start >/dev/null 2>&1 || true
 	rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-*cache
 }
 endef

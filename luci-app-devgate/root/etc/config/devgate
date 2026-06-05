@@ -1,7 +1,3 @@
-
-config devgate
-	option enabled '0'
-
 config device
 	option enable '0'
 	option mac ''

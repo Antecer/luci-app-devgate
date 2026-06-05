@@ -6,15 +6,6 @@
 				"exec"
 			],
 			"file": {
-				"/etc/init.d/devgate actual": [
-					"exec"
-				],
-				"/etc/init.d/devgate start": [
-					"exec"
-				],
-				"/etc/init.d/devgate stop": [
-					"exec"
-				],
 				"/usr/lib/opkg/status": [
 					"read"
 				]

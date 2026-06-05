@@ -8,8 +8,17 @@ uci -q batch <<-EOF >/dev/null
 EOF
 
 [ -s /etc/config/devgate ] || cat > /etc/config/devgate <<'EOF'
-config devgate
+config device
+	option enable '0'
+	option mac ''
+	option time_from '00:00'
+	option time_over '00:00'
+	option week '0'
+	option chain 'forward'
 EOF
+
+/etc/init.d/devgate enable >/dev/null 2>&1 || true
+/etc/init.d/devgate start >/dev/null 2>&1 || true
 
 rm -rf /tmp/luci-indexcache /tmp/luci-modulecache /tmp/luci-*cache
 /etc/init.d/rpcd reload >/dev/null 2>&1 || true
