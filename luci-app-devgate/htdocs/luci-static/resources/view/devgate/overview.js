@@ -24,6 +24,8 @@ var callDevGateConfig = rpc.declare({
 });
 var HOST_PICKER_ID = 'devgate-host-picker-options';
 var DEV_GATE_STATUS_REFRESH_INTERVAL = 1000;
+var DEV_GATE_MAX_TIME_RANGES = 24;
+var DEV_GATE_DEFAULT_TIME_RANGE = '00:00-00:00';
 var activeHostPicker = null;
 var hostPickerCloseInstalled = false;
 var WEEK_DAYS = [
@@ -322,6 +324,7 @@ function ensureRuleFieldLabelTarget(field) {
 	var title = field ? field.querySelector('.cbi-value-title[for]') : null;
 	var valueField = field ? field.querySelector('.cbi-value-field') : null;
 	var id = title ? title.getAttribute('for') : null;
+	var labelTarget;
 
 	if (!id || isLabelableElement(findNodeById(field, id))) {
 		return;
@@ -329,6 +332,12 @@ function ensureRuleFieldLabelTarget(field) {
 
 	if (field.classList.contains('devgate-card-uid')) {
 		title.removeAttribute('for');
+		return;
+	}
+
+	labelTarget = (valueField || field).querySelector('button, meter, output, progress, select, textarea, input:not([type="hidden"])');
+	if (labelTarget && labelTarget.id && isLabelableElement(labelTarget)) {
+		title.setAttribute('for', labelTarget.id);
 		return;
 	}
 
@@ -353,37 +362,6 @@ function setupRuleCardField(card, option, className) {
 	return field;
 }
 
-function setupRuleTimeRange(card) {
-	var startField = setupRuleCardField(card, 'time_from', 'devgate-card-time-start');
-	var endField = setupRuleCardField(card, 'time_over', 'devgate-card-time-end');
-	var startValue = startField ? startField.querySelector('.cbi-value-field') : null;
-	var endValue = endField ? (endField.querySelector('.cbi-value-field') || endField) : null;
-	var endNodes = [];
-
-	if (!startValue || !endField || !endValue) {
-		return;
-	}
-
-	while (endValue.firstChild) {
-		endNodes.push(endValue.firstChild);
-		endValue.removeChild(endValue.firstChild);
-	}
-
-	if (endNodes.length === 0) {
-		return;
-	}
-
-	startValue.classList.add('devgate-time-range-field');
-	startValue.appendChild(E('span', { 'class': 'devgate-time-separator' }, '-'));
-	endNodes.forEach(function (node) {
-		startValue.appendChild(node);
-	});
-
-	if (endField.parentNode) {
-		endField.parentNode.removeChild(endField);
-	}
-}
-
 function setupRuleCard(section, configName, sectionId, node) {
 	var removeTitle = section.titleFn('delbtntitle', sectionId);
 	var card = E('div', {
@@ -398,7 +376,7 @@ function setupRuleCard(section, configName, sectionId, node) {
 	setupRuleCardField(card, 'uid', 'devgate-card-uid');
 	setupRuleCardField(card, 'mac', 'devgate-card-target');
 	setupRuleCardField(card, 'chain', 'devgate-card-mode');
-	setupRuleTimeRange(card);
+	setupRuleCardField(card, 'time_ranges', 'devgate-card-time-ranges');
 	setupRuleCardField(card, 'week', 'devgate-card-week');
 	enable = setupRuleCardField(card, 'enable', 'devgate-card-enable');
 
@@ -960,6 +938,303 @@ function isProtectedHost(mac, ips, protectedClient) {
 	return false;
 }
 
+function normalizeTimeRangeEndpoint(value) {
+	var match = String(value || '').trim().match(/^([0-9]{1,2}):([0-9]{1,2})$/);
+	var hour;
+	var minute;
+
+	if (!match) {
+		return null;
+	}
+
+	hour = Number(match[1]);
+	minute = Number(match[2]);
+
+	if (hour > 24 || minute > 59 || (hour === 24 && minute !== 0)) {
+		return null;
+	}
+
+	return '%02d:%02d'.format(hour, minute);
+}
+
+function isTimeRangeEndpoint(value) {
+	return normalizeTimeRangeEndpoint(value) != null;
+}
+
+function parseTimeRangesValue(value) {
+	var raw = String(value == null ? '' : value).trim();
+	var ranges = [];
+
+	if (raw === '') {
+		raw = DEV_GATE_DEFAULT_TIME_RANGE;
+	}
+
+	raw.split(',').forEach(function (item) {
+		var match;
+		var start;
+		var end;
+
+		if (ranges.length >= DEV_GATE_MAX_TIME_RANGES) {
+			return;
+		}
+
+		item = String(item || '').trim();
+		match = item.match(/^([^,-]+)-([^,-]+)$/);
+		start = match ? normalizeTimeRangeEndpoint(match[1]) : null;
+		end = match ? normalizeTimeRangeEndpoint(match[2]) : null;
+
+		if (start && end) {
+			ranges.push({
+				start: start,
+				end: end
+			});
+		}
+	});
+
+	if (ranges.length === 0) {
+		ranges.push({
+			start: '00:00',
+			end: '00:00'
+		});
+	}
+
+	return ranges;
+}
+
+function emitTimeRangesChange(root) {
+	root.dispatchEvent(new CustomEvent('widget-change', {
+		bubbles: true,
+		detail: {
+			value: getTimeRangesInputValue(root)
+		}
+	}));
+	root.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function syncTimeRangeButtons(root) {
+	var rows = root.querySelectorAll('.devgate-time-range-row');
+	var add = root.querySelector('.devgate-time-range-add');
+	var readonly = root.getAttribute('data-readonly') === 'true';
+
+	if (add) {
+		add.disabled = readonly || rows.length >= DEV_GATE_MAX_TIME_RANGES;
+	}
+
+	Array.prototype.forEach.call(root.querySelectorAll('.devgate-time-range-remove'), function (button) {
+		button.disabled = readonly || rows.length <= 1;
+	});
+}
+
+function parseTimeInputMinutes(value) {
+	var normalized = normalizeTimeRangeEndpoint(value);
+	var match = normalized ? normalized.match(/^([0-9]{2}):([0-9]{2})$/) : null;
+	var hour;
+	var minute;
+
+	if (!match) {
+		return null;
+	}
+
+	hour = Number(match[1]);
+	minute = Number(match[2]);
+
+	return hour * 60 + minute;
+}
+
+function formatTimeInputMinutes(minutes) {
+	var hour;
+	var minute;
+
+	minutes = Math.max(0, Math.min(24 * 60, minutes));
+	hour = Math.floor(minutes / 60);
+	minute = minutes % 60;
+
+	return '%02d:%02d'.format(hour, minute);
+}
+
+function normalizeTimeRangeInput(input) {
+	var value = normalizeTimeRangeEndpoint(input.value);
+
+	if (value != null) {
+		input.value = value;
+	}
+}
+
+function handleTimeInputWheel(root, input, ev) {
+	var current;
+	var step;
+	var direction;
+
+	if (input.disabled || input.readOnly || document.activeElement !== input) {
+		return;
+	}
+
+	current = parseTimeInputMinutes(input.value);
+	if (current == null) {
+		current = 0;
+	}
+
+	step = ev.shiftKey ? 60 : 1;
+	direction = ev.deltaY < 0 ? 1 : -1;
+	input.value = formatTimeInputMinutes(current + direction * step);
+
+	ev.preventDefault();
+	input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function bindTimeRangeInputEvents(root, input) {
+	function normalizeAndEmit() {
+		normalizeTimeRangeInput(input);
+		emitTimeRangesChange(root);
+	}
+
+	input.addEventListener('input', function () {
+		emitTimeRangesChange(root);
+	});
+	input.addEventListener('change', normalizeAndEmit);
+	input.addEventListener('blur', normalizeAndEmit);
+	input.addEventListener('wheel', function (ev) {
+		handleTimeInputWheel(root, input, ev);
+	}, { passive: false });
+}
+
+function appendTimeRangeRow(root, range) {
+	var cbid = root.getAttribute('data-cbid');
+	var readonly = root.getAttribute('data-readonly') === 'true';
+	var index = Number(root.getAttribute('data-next-index') || '0');
+	var startId = index === 0 ? 'widget.' + cbid : 'widget.%s.%d.start'.format(cbid, index);
+	var endId = index === 0 ? 'widget.%s.end'.format(cbid) : 'widget.%s.%d.end'.format(cbid, index);
+	var start = E('input', {
+		id: startId,
+		type: 'text',
+		'class': 'devgate-time-input',
+		inputmode: 'numeric',
+		maxlength: '5',
+		placeholder: '00:00',
+		value: range && range.start || '00:00',
+		disabled: readonly || null
+	});
+	var end = E('input', {
+		id: endId,
+		type: 'text',
+		'class': 'devgate-time-input',
+		inputmode: 'numeric',
+		maxlength: '5',
+		placeholder: '24:00',
+		value: range && range.end || '00:00',
+		disabled: readonly || null
+	});
+	var action;
+	var row;
+
+	root.setAttribute('data-next-index', String(index + 1));
+
+	bindTimeRangeInputEvents(root, start);
+	bindTimeRangeInputEvents(root, end);
+
+	if (index === 0) {
+		action = E('input', {
+			type: 'button',
+			'class': 'cbi-button devgate-time-range-action devgate-time-range-add',
+			value: _('添加'),
+			disabled: readonly || null,
+			click: function () {
+				if (root.querySelectorAll('.devgate-time-range-row').length >= DEV_GATE_MAX_TIME_RANGES) {
+					return;
+				}
+
+				appendTimeRangeRow(root, { start: '00:00', end: '00:00' });
+				syncTimeRangeButtons(root);
+				emitTimeRangesChange(root);
+			}
+		});
+	} else {
+		action = E('input', {
+			type: 'button',
+			'class': 'cbi-button devgate-time-range-action devgate-time-range-remove',
+			value: _('移除'),
+			disabled: readonly || null,
+			click: function () {
+				if (root.querySelectorAll('.devgate-time-range-row').length <= 1) {
+					return;
+				}
+
+				row.parentNode.removeChild(row);
+				syncTimeRangeButtons(root);
+				emitTimeRangesChange(root);
+			}
+		});
+	}
+
+	row = E('div', { 'class': 'devgate-time-range-row' }, [
+		start,
+		E('span', { 'class': 'devgate-time-separator' }, '-'),
+		end,
+		action
+	]);
+
+	root.appendChild(row);
+}
+
+function renderTimeRanges(option, section_id, cfgvalue) {
+	var cbid = option.cbid(section_id);
+	var readonly = ((option.readonly != null) ? option.readonly : option.map.readonly) || null;
+	var root = E('div', {
+		id: cbid,
+		'class': 'devgate-time-ranges',
+		'data-cbid': cbid,
+		'data-readonly': readonly ? 'true' : 'false'
+	});
+
+	parseTimeRangesValue(cfgvalue != null ? cfgvalue : option.default).forEach(function (range) {
+		appendTimeRangeRow(root, range);
+	});
+
+	syncTimeRangeButtons(root);
+	return root;
+}
+
+function getTimeRangesInputValue(root) {
+	var values = [];
+
+	Array.prototype.forEach.call(root.querySelectorAll('.devgate-time-range-row'), function (row) {
+		var inputs = row.querySelectorAll('.devgate-time-input');
+		var start = inputs[0] ? String(inputs[0].value || '').trim() : '';
+		var end = inputs[1] ? String(inputs[1].value || '').trim() : '';
+
+		start = normalizeTimeRangeEndpoint(start) || start;
+		end = normalizeTimeRangeEndpoint(end) || end;
+		values.push('%s-%s'.format(start, end));
+	});
+
+	return values.join(',');
+}
+
+function validateTimeRangesValue(value) {
+	var raw = String(value == null ? '' : value).trim();
+	var ranges = raw ? raw.split(',') : [];
+	var timePattern = /^([^,]+)-([^,]+)$/;
+	var i;
+	var match;
+
+	if (ranges.length < 1) {
+		return _('请至少保留一个禁用时段。');
+	}
+
+	if (ranges.length > DEV_GATE_MAX_TIME_RANGES) {
+		return _('禁用时段最多允许24个。');
+	}
+
+	for (i = 0; i < ranges.length; i++) {
+		match = String(ranges[i] || '').trim().match(timePattern);
+		if (!match || !normalizeTimeRangeEndpoint(match[1]) || !normalizeTimeRangeEndpoint(match[2])) {
+			return _('禁用时段范围必须为 00:00-24:00。');
+		}
+	}
+
+	return true;
+}
+
 function parseWeekValue(value) {
 	var selected = {};
 	var raw = String(value == null ? '' : value).trim();
@@ -1055,7 +1330,7 @@ function renderRuleModeRadios(option, section_id, cfgvalue) {
 				'class': 'cbi-input-radio',
 				value: choice.value,
 				checked: value === choice.value ? 'checked' : null,
-				disabled: readonly
+				disabled: readonly || null
 			}),
 			E('label', { 'for': inputId }),
 			E('span', {}, choice.label)
@@ -1074,7 +1349,7 @@ function renderRuleEnableButton(option, section_id, cfgvalue) {
 		type: 'checkbox',
 		'class': 'devgate-rule-enable-input',
 		checked: enabled ? 'checked' : null,
-		disabled: readonly
+		disabled: readonly || null
 	});
 	var button = E('label', {
 		'for': widgetId,
@@ -1215,7 +1490,7 @@ return view.extend({
 				type: 'button',
 				'class': 'devgate-host-select cbi-button',
 				'aria-haspopup': 'listbox',
-				disabled: disabled,
+				disabled: disabled || null,
 				click: function (ev) {
 					ev.preventDefault();
 					openHostPicker(wrapper, button, input, extractMac(input.value));
@@ -1277,23 +1552,26 @@ return view.extend({
 			return this.map.data.set(this.uciconfig || this.map.config, section_id, this.option, value === 'input' ? 'all' : value);
 		};
 
-		o = s.option(form.Value, 'time_from', _('禁用时段'));
-		o.placeholder = '00:00';
-		o.default = '00:00';
-
-		o = s.option(form.Value, 'time_over', '');
-		o.placeholder = '00:00';
-		o.default = '00:00';
-		o.isActive = function () {
-			return true;
+		o = s.option(form.Value, 'time_ranges', _('禁用时段'));
+		o.default = DEV_GATE_DEFAULT_TIME_RANGE;
+		o.rmempty = false;
+		o.renderWidget = function (section_id, option_index, cfgvalue) {
+			return renderTimeRanges(this, section_id, cfgvalue);
 		};
 		o.formvalue = function (section_id) {
 			var elem = this.map.findElement('id', this.cbid(section_id));
 
-			return elem ? elem.value : null;
+			return elem ? getTimeRangesInputValue(elem) : null;
 		};
+		o.write = function (section_id, value) {
+			return this.map.data.set(this.uciconfig || this.map.config, section_id, this.option, value || DEV_GATE_DEFAULT_TIME_RANGE);
+		};
+		o.validate = function (section_id, value) {
+			return validateTimeRangesValue(value);
+		};
+		bindDomOptionValidation(o);
 
-		o = s.option(form.Value, 'week', _('生效日期'));
+		o = s.option(form.Value, 'week', _('生效周期'));
 		o.default = '0';
 		o.rmempty = false;
 		o.renderWidget = function (section_id, option_index, cfgvalue) {

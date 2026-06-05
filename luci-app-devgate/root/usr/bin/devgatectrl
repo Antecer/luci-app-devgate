@@ -167,18 +167,87 @@ flush_firewall_changes() {
 }
 
 # 时间检查函数
+time_to_minutes() {
+	local value="$1"
+	local hour="${value%:*}"
+	local minute="${value#*:}"
+
+	hour="$(echo "$hour" | sed 's/^0*//')"
+	minute="$(echo "$minute" | sed 's/^0*//')"
+	[ -n "$hour" ] || hour=0
+	[ -n "$minute" ] || minute=0
+
+	echo $((hour * 60 + minute))
+}
+
+is_time_value() {
+	local value="${1:-}"
+	local hour="${value%:*}"
+	local minute="${value#*:}"
+
+	[ "$hour:$minute" = "$value" ] || return 1
+	echo "$hour" | grep -qE '^[0-9]{1,2}$' || return 1
+	echo "$minute" | grep -qE '^[0-9]{1,2}$' || return 1
+
+	hour="$(echo "$hour" | sed 's/^0*//')"
+	minute="$(echo "$minute" | sed 's/^0*//')"
+	[ -n "$hour" ] || hour=0
+	[ -n "$minute" ] || minute=0
+
+	[ "$hour" -ge 0 ] && [ "$hour" -le 24 ] || return 1
+	[ "$minute" -ge 0 ] && [ "$minute" -le 59 ] || return 1
+	[ "$hour" -lt 24 ] || [ "$minute" -eq 0 ]
+}
+
 is_time_in_range() {
 	local start_time=$1
 	local end_time=$2
 	local current_time=$(date +%H:%M)
+	local start_min
+	local end_min
+	local current_min
 
-	if [ "$start_time" = "$end_time" ]; then
+	start_min=$(time_to_minutes "$start_time")
+	end_min=$(time_to_minutes "$end_time")
+	current_min=$(time_to_minutes "$current_time")
+
+	if [ "$start_min" -eq "$end_min" ]; then
 		return 0
-	elif [ "$start_time" \< "$end_time" ]; then
-		[ "$current_time" \> "$start_time" ] && [ "$current_time" \< "$end_time" ] && return 0
+	elif [ "$start_min" -lt "$end_min" ]; then
+		[ "$current_min" -ge "$start_min" ] && [ "$current_min" -lt "$end_min" ] && return 0
 	else
-		[ "$current_time" \> "$start_time" ] || [ "$current_time" \< "$end_time" ] && return 0
+		[ "$current_min" -ge "$start_min" ] || [ "$current_min" -lt "$end_min" ] && return 0
 	fi
+
+	return 1
+}
+
+is_time_ranges_active() {
+	local time_ranges="${1:-00:00-00:00}"
+	local range
+	local start_time
+	local end_time
+
+	for range in $(printf '%s' "$time_ranges" | sed 's/,/ /g'); do
+		range=$(echo "$range" | xargs)
+		[ -n "$range" ] || continue
+
+		start_time="${range%-*}"
+		end_time="${range#*-}"
+
+		if [ "$start_time" = "$range" ] || [ "$end_time" = "$range" ]; then
+			dbg "跳过无效禁用时段: $range"
+			continue
+		fi
+
+		if ! is_time_value "$start_time" || ! is_time_value "$end_time"; then
+			dbg "跳过无效禁用时段: $range"
+			continue
+		fi
+
+		is_time_in_range "$start_time" "$end_time" && return 0
+	done
+
 	return 1
 }
 
@@ -199,20 +268,19 @@ check_device_control() {
 	local id="$1"
 	local target=$(config_t_get device mac "$id")
 	local weekdays=$(config_t_get device week "$id" "0")
-	local start_time=$(config_t_get device time_from "$id" "00:00")
-	local end_time=$(config_t_get device time_over "$id" "00:00")
+	local time_ranges="$(config_t_get device time_ranges "$id" "00:00-00:00")"
 
 	is_weekday_in_range "$weekdays" || {
 		dbg "生效日期外: $target"
 		return 0
 	}
 
-	if is_time_in_range "$start_time" "$end_time"; then
-		dbg "禁用时段内: $target ($start_time-$end_time)"
+	if is_time_ranges_active "$time_ranges"; then
+		dbg "禁用时段内: $target ($time_ranges)"
 		return 1
 	fi
 
-	dbg "禁用时段外: $target ($start_time-$end_time)"
+	dbg "禁用时段外: $target ($time_ranges)"
 	return 0
 }
 
